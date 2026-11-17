@@ -126,6 +126,21 @@ func _process(_delta: float) -> bool:
 						if is_nan(p.bx[i]) or is_nan(p.defl[i]):
 							bad = true
 				check(not bad, "no NaNs or negative soil after a fall")
+				# Nothing is lost: a saved jar comes back the same.
+				var state: Dictionary = bytes_to_var(var_to_bytes(world.save_state()))
+				var copy := World.new()
+				root.add_child(copy)
+				copy.setup(1, 1500.0, 780.0, state)
+				var same := copy.plants.size() == world.living() + (world.plants.size() - world.living()) and copy.logs.size() == world.logs.size() and copy.seeds.size() == world.seeds.size()
+				var tall_a := 0.0
+				var tall_b := 0.0
+				for p in world.plants:
+					tall_a = maxf(tall_a, p.height)
+				for p in copy.plants:
+					tall_b = maxf(tall_b, p.height)
+				check(same and absf(tall_a - tall_b) < 2.0, "a saved jar loads back the same (%d plants, %d logs, tallest %.0f vs %.0f)" % [copy.plants.size(), copy.logs.size(), tall_a, tall_b])
+				check(copy.shapes.list.size() == world.shapes.list.size(), "the field guide survives a save")
+				copy.queue_free()
 				print("SIM_PASS" if failures == 0 else "SIM_FAILED %d" % failures)
 				return true
 	return false

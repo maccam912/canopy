@@ -21,6 +21,10 @@ var leaf_tex: Texture2D
 var trail := PackedVector2Array()
 var trail_life := 0.0
 var preview := PackedVector2Array()
+var ring_at := Vector2()
+var ring_data := PackedFloat32Array()
+var ring_life := 0.0
+var ring_size := 20.0
 
 
 func setup(w: World) -> void:
@@ -52,8 +56,8 @@ func _on_event(kind: String, d: Dictionary) -> void:
 				b.vel = Vector2(randf_range(-50, 50), randf_range(-70, -15)) * power
 				b.span = randf_range(0.7, 1.8)
 				b.life = b.span
-				b.size = randf_range(5, 14) * power
-				b.col = Color(0.62, 0.55, 0.44, 0.34)
+				b.size = randf_range(4, 10) * power
+				b.col = Color(0.62, 0.55, 0.44, 0.2)
 				bits.append(b)
 			for k in int(4 + 6 * power):
 				_leaf(Vector2(d.x + randf_range(-d.length * 0.3, d.length * 0.3), d.y - randf_range(4, 30)), d.hue, false, Vector2(randf_range(-80, 80), randf_range(-140, -30)) * power)
@@ -132,6 +136,14 @@ func rain(at: Vector2) -> void:
 		bits.append(b)
 
 
+## A cut stump shows the plant's life in its rings: wide for bright years, narrow for shaded ones.
+func show_rings(at: Vector2, rings: PackedFloat32Array, radius: float) -> void:
+	ring_at = at + Vector2(0, -46)
+	ring_data = rings.slice(maxi(0, rings.size() - 14))
+	ring_life = 5.0
+	ring_size = clampf(radius * 3.2, 22.0, 46.0)
+
+
 func swipe(from: Vector2, to: Vector2) -> void:
 	if trail.is_empty():
 		trail.append(from)
@@ -171,6 +183,8 @@ func _process(delta: float) -> void:
 				b.vel.y += 240.0 * delta
 			b.pos += b.vel * delta
 		i -= 1
+	if ring_life > 0.0:
+		ring_life -= delta
 	if trail_life > 0.0:
 		trail_life -= delta
 		if trail_life <= 0.0:
@@ -222,6 +236,21 @@ func _draw() -> void:
 		else:
 			draw_line(br.b_at, br.a_at, Color(0.62, 0.47, 0.3).lerp(Color(1.0, 0.75, 0.5), strain), 4.0)
 			draw_circle(br.b_at, 3.0, Color(0.5, 0.38, 0.25))
+	if ring_life > 0.0 and ring_data.size() > 0:
+		var a := clampf(ring_life, 0.0, 1.0)
+		var total := 0.0
+		var peak := 0.001
+		for v in ring_data:
+			peak = maxf(peak, v)
+		for v in ring_data:
+			total += 0.35 + 0.65 * v / peak
+		draw_circle(ring_at, ring_size + 3.0, Color(0.25, 0.18, 0.12, a))
+		draw_circle(ring_at, ring_size, Color(0.87, 0.74, 0.52, a))
+		var r := 0.0
+		for v in ring_data:
+			r += (0.35 + 0.65 * v / peak) / total * ring_size
+			draw_arc(ring_at, r, 0.0, TAU, 40, Color(0.45, 0.3, 0.18, a * 0.85), 1.0, true)
+		draw_circle(ring_at, 1.5, Color(0.35, 0.22, 0.14, a))
 	if preview.size() == 2:
 		draw_line(preview[0], preview[1], Color(1, 1, 1, 0.5), 1.4)
 	if trail.size() >= 2:

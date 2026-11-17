@@ -224,7 +224,44 @@ func blocks(at: Vector2) -> bool:
 
 
 func say(title: String, sub := "", seconds := 4.5) -> void:
-	toast_queue.append([title, sub, seconds])
+	if toast_queue.size() < 4:
+		toast_queue.append([title, sub, seconds])
+
+
+## A short journal of what happened while the game was closed. Tap to dismiss.
+func show_journal(lines: Array[String]) -> void:
+	var card := PanelContainer.new()
+	var style := StyleBoxFlat.new()
+	style.bg_color = Guide.PAPER
+	style.set_corner_radius_all(6)
+	style.set_content_margin_all(18)
+	style.shadow_color = Color(0, 0, 0, 0.5)
+	style.shadow_size = 14
+	card.add_theme_stylebox_override("panel", style)
+	var box := VBoxContainer.new()
+	card.add_child(box)
+	var title := Label.new()
+	title.text = "While you were away"
+	title.add_theme_font_size_override("font_size", 24)
+	title.add_theme_color_override("font_color", Guide.INK)
+	box.add_child(title)
+	for line in lines:
+		var l := Label.new()
+		l.text = line
+		l.add_theme_font_size_override("font_size", 16)
+		l.add_theme_color_override("font_color", Guide.FADED)
+		box.add_child(l)
+	card.set_anchors_and_offsets_preset(Control.PRESET_CENTER)
+	card.grow_horizontal = Control.GROW_DIRECTION_BOTH
+	card.grow_vertical = Control.GROW_DIRECTION_BOTH
+	card.mouse_filter = Control.MOUSE_FILTER_STOP
+	card.gui_input.connect(func(e: InputEvent) -> void:
+		if e is InputEventMouseButton and e.pressed:
+			card.queue_free())
+	root.add_child(card)
+	get_tree().create_timer(14.0).timeout.connect(func() -> void:
+		if is_instance_valid(card):
+			card.queue_free())
 
 
 func nudge(text: String, seconds := 5.0) -> void:

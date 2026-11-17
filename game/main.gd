@@ -73,6 +73,17 @@ var film_every := 10
 var film_taken := 0
 var frame := 0
 var scripted := false
+var fresh := false
+var use_save := false
+var save_at_end := false
+var pretend_away := 0.0
+var save_acc := 0.0
+var catch_until := -1.0
+var catch_from := 0.0
+var journal := {"falls": 0, "biggest": 0, "shapes": [], "lid": false}
+
+const SAVE_PATH := "user://canopy.save"
+const AWAY_CAP := 20.0 * 60.0
 var guide_frame := -1
 
 
@@ -111,6 +122,15 @@ func _ready() -> void:
 				k += 1
 			"--guide":
 				open_guide = true
+			"--fresh":
+				fresh = true
+			"--use-save":
+				use_save = true
+			"--save-at-end":
+				save_at_end = true
+			"--away":
+				pretend_away = float(args[k + 1])
+				k += 1
 			"--all-tools":
 				for name: String in TOOL_NOTES:
 					unlocked[name] = true
@@ -146,14 +166,18 @@ func _ready() -> void:
 	world.plant_removed.connect(_on_plant_removed)
 	world.log_added.connect(_on_log_added)
 	world.happened.connect(_on_event)
-	world.setup(world_seed)
+	var saved := {} if ((scripted and not use_save) or fresh) else _read_save()
+	world.setup(world_seed, 1500.0, 780.0, saved.get("world", {}))
 	back.setup(world)
 	front.setup(world)
 	fx.setup(world)
 	sound.setup(world)
 	sound.muted = smoke
-	world.sun_phi = start_phi
-	world.sow_starters()
+	if saved.is_empty():
+		world.sun_phi = start_phi
+		world.sow_starters()
+	else:
+		_restore(saved)
 	world.speed = start_speed
 	fast_latch = start_speed > 1.0
 
@@ -164,9 +188,11 @@ func _ready() -> void:
 	hud.sound_toggled.connect(_toggle_sound)
 	for name: String in unlocked:
 		hud.unlock(name, false)
-	hud.set_wish(WISHES[wish_at][1])
-	if not scripted:
+	hud.set_wish(WISHES[wish_at][1] if not wish_done.has(WISHES[wish_at][0]) else "")
+	if not scripted and saved.is_empty():
 		hud.nudge("Drag the sun.  Swipe across a stem to snip it.  Hold still to let time run.", 9.0)
+	hud.guide_btn.visible = not world.shapes.list.is_empty()
+	_show_pocket()
 
 	cam = Camera2D.new()
 	add_child(cam)
@@ -198,13 +224,13 @@ func _on_plant_added(p: Plant) -> void:
 	var v := PlantView.new()
 	v.setup(p, Art.leaf())
 	plant_layer.add_child(v)
-	views[p.id] = v
+	views[p] = v
 
 
 func _on_plant_removed(p: Plant) -> void:
-	var v: PlantView = views.get(p.id)
+	var v: PlantView = views.get(p)
 	if v != null:
-		views.erase(p.id)
+		views.erase(p)
 		v.queue_free()
 
 
@@ -215,14 +241,94 @@ func _on_log_added(l: LogBody) -> void:
 	l.add_child(v)
 
 
+func _read_save() -> Dictionary:
+	if not FileAccess.file_exists(SAVE_PATH):
+		return {}
+	var f := FileAccess.open(SAVE_PATH, FileAccess.READ)
+	if f == null:
+		return {}
+	var data: Variant = f.get_var()
+	if typeof(data) != TYPE_DICTIONARY or data.get("version", 0) != 1 or not data.has("world"):
+		return {}
+	return data
+
+
+func save_game() -> void:
+	if (scripted and not save_at_end) or world == null:
+		return
+	var items := []
+	for item: Array in pocket:
+		items.append([item[0].h, item[0].hue, item[1], item[2]])
+	var data := {
+		"version": 1, "at": Time.get_unix_time_from_system(), "world": world.save_state(),
+		"unlocked": unlocked, "firsts": firsts, "stamps": stamps, "wish_done": wish_done, "wish_at": wish_at,
+		"records": records, "told": told, "pocket": items, "muted": sound.muted,
+	}
+	var f := FileAccess.open(SAVE_PATH, FileAccess.WRITE)
+	if f != null:
+		f.store_var(data)
+
+
+func _restore(d: Dictionary) -> void:
+	unlocked = d.unlocked
+	firsts = d.firsts
+	stamps = d.stamps
+	wish_done = d.wish_done
+	wish_at = d.wish_at
+	records = d.records
+	told = d.told
+	for item: Array in d.pocket:
+		pocket.append([Genome.make(Array(item[0]), item[1]), item[2], item[3]])
+	if d.muted:
+		_toggle_sound()
+	# The forest kept growing while the game was closed, up to a cap.
+	var away := clampf(Time.get_unix_time_from_system() - float(d.at) + pretend_away, 0.0, AWAY_CAP)
+	if away > 30.0:
+		catch_from = world.time
+		catch_until = world.time + away
+		Engine.time_scale = 6.0
+		Engine.physics_ticks_per_second = 360
+		Engine.max_physics_steps_per_frame = 12
+		hud.say("Catching up on %d minutes away…" % maxi(1, int(away / 60.0)), "", 600.0)
+
+
+func _catch_up() -> void:
+	world.speed = 24.0
+	if world.time < catch_until:
+		return
+	catch_until = -1.0
+	Engine.time_scale = 1.0
+	Engine.physics_ticks_per_second = 60
+	Engine.max_physics_steps_per_frame = 4
+	hud.toast_time = 0.0
+	var lines: Array[String] = []
+	var minutes := int((world.time - catch_from) / 60.0)
+	lines.append("The forest grew for %d minute%s." % [minutes, "" if minutes == 1 else "s"])
+	if journal.falls > 0:
+		lines.append("%d fall%s%s." % [journal.falls, "" if journal.falls == 1 else "s", (", the biggest taking down %d" % journal.biggest) if journal.biggest >= 2 else ""])
+	else:
+		lines.append("Nothing fell.")
+	for name: String in journal.shapes:
+		lines.append("A new shape appeared: %s." % name)
+	if journal.lid:
+		lines.append("Something touched the lid.")
+	hud.show_journal(lines)
+
+
 func _process(delta: float) -> void:
 	frame += 1
+	save_acc += delta
+	if save_acc > 30.0 and catch_until < 0.0:
+		save_acc = 0.0
+		save_game()
 	if gesture == "hold" and not holding_fast and Time.get_ticks_msec() * 0.001 - down_time > 0.32:
 		holding_fast = true
 	if gesture == "pour":
 		_pour(delta)
 	var want_fast := fast_latch or holding_fast or Input.is_key_pressed(KEY_SPACE)
-	if not scripted:
+	if catch_until >= 0.0:
+		_catch_up()
+	elif not scripted:
 		world.speed = FAST if want_fast else 1.0
 	hud.set_fast(want_fast, world.falling)
 	if gesture != "blow" and world.wind != 0.0:
@@ -241,6 +347,8 @@ func _process(delta: float) -> void:
 		get_tree().quit()
 	if shot_path != "" and frame >= shot_frames and not shot_done:
 		shot_done = true
+		if save_at_end:
+			save_game()
 		await RenderingServer.frame_post_draw
 		get_viewport().get_texture().get_image().save_png(shot_path)
 		print("SHOT ", shot_path, " t=", world.time, " plants=", world.plants.size(), " logs=", world.logs.size(), " falls=", world.count_falls, " fps=", Engine.get_frames_per_second())
@@ -297,6 +405,15 @@ func _shape_name(id: int) -> String:
 
 
 func _on_event(kind: String, d: Dictionary) -> void:
+	if catch_until >= 0.0:
+		match kind:
+			"fall":
+				journal.falls += 1
+				journal.biggest = maxi(journal.biggest, d.count)
+			"new_shape":
+				journal.shapes.append(d.shape.name)
+			"lid":
+				journal.lid = true
 	match kind:
 		"seeded":
 			if _first("seed", "the first seed ripened, on a %s." % _shape_name(d.plant.species)):
@@ -504,6 +621,9 @@ func _unhandled_input(event: InputEvent) -> void:
 func _notification(what: int) -> void:
 	if what == NOTIFICATION_WM_GO_BACK_REQUEST and hud != null and hud.guide.visible:
 		hud.guide.visible = false
+	elif what == NOTIFICATION_WM_CLOSE_REQUEST or what == NOTIFICATION_APPLICATION_PAUSED or what == NOTIFICATION_WM_GO_BACK_REQUEST:
+		if catch_until < 0.0:
+			save_game()
 
 
 func _down(screen: Vector2) -> void:
@@ -601,6 +721,8 @@ func _cut(from: Vector2, to: Vector2) -> void:
 			var hit: Variant = Geometry2D.segment_intersects_segment(from, to, a, b)
 			if hit != null:
 				var t := a.distance_to(hit) / maxf(a.distance_to(b), 0.001)
+				if p.rad[i] >= 3.0 and p.rings.size() >= 2:
+					fx.show_rings(hit, p.rings, p.rad[i])
 				world.snip(p, i, t, signf(to.x - from.x))
 				sound.snip()
 				break

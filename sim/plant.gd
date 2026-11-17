@@ -120,6 +120,60 @@ func _init(w: World, g: Genome, x: float, reserve: float) -> void:
 	pose()
 
 
+## Everything needed to rebuild this plant later.
+func save_state() -> Dictionary:
+	return {
+		"id": id, "h": genome.h, "hue": genome.hue, "species": species, "x": base_x, "generation": generation,
+		"parent": parent, "slen": slen, "rad": rad, "rest": rest, "defl": defl, "leaf": leaf, "tip": tip, "order": order, "bias": bias,
+		"alive": alive, "energy": energy, "root": root, "nutrient": nutrient, "seed_bank": seed_bank, "seeds_ripe": seeds_ripe,
+		"mature": mature, "age": age, "dead_for": dead_for, "health": health, "falls": falls_survived, "cause": cause,
+		"rings": rings, "ring_acc": ring_acc, "ring_t": ring_t,
+	}
+
+
+func load_state(d: Dictionary) -> void:
+	id = d.id
+	species = d.species
+	generation = d.generation
+	parent = d.parent
+	slen = d.slen
+	rad = d.rad
+	rest = d.rest
+	defl = d.defl
+	leaf = d.leaf
+	tip = d.tip
+	order = d.order
+	bias = d.bias
+	n = parent.size()
+	for arr: Variant in [dvel, ang, ax, ay, bx, by, lgain, kids, strain, efx, efy, epx, epy, sm, sfx, sfy, st0, smx, smy, dist, depth]:
+		arr.resize(n)
+		arr.fill(0)
+	for i in n:
+		if parent[i] >= 0:
+			kids[parent[i]] += 1
+	alive = d.alive
+	energy = d.energy
+	root = d.root
+	nutrient = d.nutrient
+	seed_bank = d.seed_bank
+	seeds_ripe = d.seeds_ripe
+	mature = d.mature
+	age = d.age
+	dead_for = d.dead_for
+	health = d.health
+	falls_survived = d.falls
+	cause = d.cause
+	rings = d.rings
+	ring_acc = d.ring_acc
+	ring_t = d.ring_t
+	pose()
+	_measure()
+	_update_anchor()
+	col_dirty = true
+	awake = true
+	still = 0
+
+
 func _derive() -> void:
 	var h := genome.h
 	g_reach = lerpf(0.04, 1.0, h[Genome.REACH])

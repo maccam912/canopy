@@ -92,16 +92,141 @@ var count_rotted := 0
 var best_cascade := 0
 
 
-func setup(p_seed: int, w := 1500.0, h := 780.0) -> void:
+func setup(p_seed: int, w := 1500.0, h := 780.0, state := {}) -> void:
 	rng.seed = p_seed
 	jar_w = w
 	jar_h = h
-	lid_y = -h
-	soil.setup(w, rng)
+	if not state.is_empty():
+		jar_w = state.jar_w
+		jar_h = state.jar_h
+	lid_y = -jar_h
+	soil.setup(jar_w, rng)
 	occupied.resize(soil.n)
 	seed_cols.resize(soil.n)
+	if not state.is_empty():
+		soil.height = state.soil_height
+		soil.rich = state.soil_rich
+		soil.wet = state.soil_wet
 	_build_ground()
+	if not state.is_empty():
+		_load(state)
 	compute_light()
+
+
+## The whole jar as plain data, for saving.
+func save_state() -> Dictionary:
+	var ps := []
+	for p in plants:
+		if not p.removed:
+			ps.append(p.save_state())
+	var ss := []
+	for s in seeds:
+		ss.append({"x": s.x, "y": s.y, "vx": s.vx, "vy": s.vy, "h": s.genome.h, "hue": s.genome.hue, "mass": s.mass, "reserve": s.reserve,
+			"resting": s.resting, "t": s.t, "delay": s.delay, "life": s.life, "species": s.species, "generation": s.generation})
+	var ls := []
+	for l in logs:
+		# Fallen wood is saved where it lies, already turned to its resting angle.
+		var data := PackedFloat32Array()
+		data.resize(l.segs.size())
+		var xf := l.global_transform
+		for i in l.segs.size() / LogBody.STRIDE:
+			var o := i * LogBody.STRIDE
+			var a := xf * Vector2(l.segs[o], l.segs[o + 1])
+			var b := xf * Vector2(l.segs[o + 2], l.segs[o + 3])
+			data[o] = a.x
+			data[o + 1] = a.y
+			data[o + 2] = b.x
+			data[o + 3] = b.y
+			data[o + 4] = l.segs[o + 4]
+			data[o + 5] = l.segs[o + 5]
+		ls.append({"data": data, "x": l.position.x, "y": l.position.y, "h": l.genome.h, "hue": l.genome.hue, "species": l.species,
+			"nutrient": l.nutrient, "rot": l.rot, "age": l.age, "seeds": l.seeds, "landed": l.landed, "flung": l.flung})
+	var bs := []
+	for b in braces:
+		bs.append({"tie": b.tie, "a": b.a.id, "a_at": b.a_at, "b": b.b.id if b.tie else -1, "b_at": b.b_at, "length": b.length, "stiff": b.stiff, "limit": b.limit})
+	return {
+		"version": 1, "jar_w": jar_w, "jar_h": jar_h, "time": time, "clock": clock, "sun_phi": sun_phi, "sun_vel": sun_vel,
+		"next_id": next_id, "rng": rng.state, "soil_height": soil.height, "soil_rich": soil.rich, "soil_wet": soil.wet,
+		"shapes": shapes.list, "names": shapes.used_names, "plants": ps, "seeds": ss, "logs": ls, "braces": bs,
+		"count_falls": count_falls, "count_born": count_born, "count_died": count_died, "count_rotted": count_rotted,
+		"best_cascade": best_cascade, "tallest_ever": tallest_ever,
+	}
+
+
+func _load(d: Dictionary) -> void:
+	time = d.time
+	clock = d.clock
+	sun_phi = d.sun_phi
+	sun_vel = d.sun_vel
+	rng.state = d.rng
+	shapes.list.assign(d.shapes)
+	shapes.used_names = d.names
+	count_falls = d.count_falls
+	count_born = d.count_born
+	count_died = d.count_died
+	count_rotted = d.count_rotted
+	best_cascade = d.best_cascade
+	tallest_ever = d.tallest_ever
+	for s in shapes.list:
+		s.alive = 0
+	var by_id := {}
+	for pd: Dictionary in d.plants:
+		var p := add_plant(Genome.make(Array(pd.h), pd.hue), pd.x, 0.0)
+		if p.species >= 0:
+			shapes.list[p.species].total -= 1
+			shapes.list[p.species].alive -= 1
+		p.load_state(pd)
+		if p.alive and p.species >= 0:
+			shapes.list[p.species].alive += 1
+		by_id[p.id] = p
+	count_born = d.count_born
+	next_id = d.next_id
+	for sd: Dictionary in d.seeds:
+		var s := SeedBit.new()
+		s.genome = Genome.make(Array(sd.h), sd.hue)
+		s.x = sd.x
+		s.y = sd.y
+		s.vx = sd.vx
+		s.vy = sd.vy
+		s.mass = sd.mass
+		s.reserve = sd.reserve
+		s.resting = sd.resting
+		s.t = sd.t
+		s.delay = sd.delay
+		s.life = sd.life
+		s.species = sd.species
+		s.generation = sd.generation
+		s.phase = rng.randf() * TAU
+		if s.resting:
+			seed_cols[soil.col(s.x)] += 1
+		seeds.append(s)
+	for ld: Dictionary in d.logs:
+		var body := LogBody.new()
+		body.genome = Genome.make(Array(ld.h), ld.hue)
+		body.species = ld.species
+		body.setup(self, ld.data, Vector2(ld.x, ld.y), Vector2.ZERO, 0.0)
+		body.nutrient = ld.nutrient
+		body.rot = ld.rot
+		body.age = ld.age
+		body.seeds = ld.seeds
+		body.landed = ld.landed
+		body.flung = ld.flung
+		add_child(body)
+		logs.append(body)
+		log_added.emit(body)
+	for bd: Dictionary in d.braces:
+		if not by_id.has(bd.a) or (bd.tie and not by_id.has(bd.b)):
+			continue
+		var b := Brace.new()
+		b.tie = bd.tie
+		b.a = by_id[bd.a]
+		b.a_at = bd.a_at
+		b.b = by_id[bd.b] if bd.tie else null
+		b.b_at = bd.b_at
+		b.length = bd.length
+		b.stiff = bd.stiff
+		b.limit = bd.limit
+		braces.append(b)
 
 
 func _build_ground() -> void:
