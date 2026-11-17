@@ -58,8 +58,8 @@ var grip_acc := 0.0
 var shapes_standing := 0
 var tallest_ever := 0.0
 var jar_w := 1500.0
-var jar_h := 620.0
-var lid_y := -620.0
+var jar_h := 540.0
+var lid_y := -540.0
 var soil := Soil.new()
 var light := LightField.new()
 var shapes := Shapes.new()
@@ -109,7 +109,7 @@ var count_rotted := 0
 var best_cascade := 0
 
 
-func setup(p_seed: int, w := 1500.0, h := 620.0, state := {}) -> void:
+func setup(p_seed: int, w := 1500.0, h := 540.0, state := {}) -> void:
 	rng.seed = p_seed
 	jar_w = w
 	jar_h = h

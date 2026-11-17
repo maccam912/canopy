@@ -61,6 +61,8 @@ func _on_event(kind: String, data: Dictionary) -> void:
 		grips += 1
 	elif kind == "lid":
 		print("  [%5.0fs] touched the lid" % world.time)
+	elif kind == "lid_held":
+		print("  [%5.0fs] LID HELD: the glass cracks" % world.time)
 
 
 func _fmt(h: PackedFloat32Array) -> String:

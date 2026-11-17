@@ -25,10 +25,10 @@ const TOOL_NOTES := {
 
 ## Each home is wider and a little taller than the last. The hillside has no lid.
 const HOMES := [
-	{"kind": "jar", "name": "Jar", "w": 1500.0, "h": 620.0},
-	{"kind": "tank", "name": "Tank", "w": 2100.0, "h": 700.0},
-	{"kind": "greenhouse", "name": "Greenhouse", "w": 2800.0, "h": 780.0},
-	{"kind": "hillside", "name": "Hillside", "w": 3600.0, "h": 900.0},
+	{"kind": "jar", "name": "Jar", "w": 1500.0, "h": 540.0},
+	{"kind": "tank", "name": "Tank", "w": 2100.0, "h": 600.0},
+	{"kind": "greenhouse", "name": "Greenhouse", "w": 2800.0, "h": 660.0},
+	{"kind": "hillside", "name": "Hillside", "w": 3600.0, "h": 760.0},
 ]
 
 var world: World
