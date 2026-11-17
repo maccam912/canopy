@@ -20,6 +20,7 @@ var glow_node: Node2D
 var leaf_tex: Texture2D
 var trail := PackedVector2Array()
 var trail_life := 0.0
+var preview := PackedVector2Array()
 
 
 func setup(w: World) -> void:
@@ -105,6 +106,32 @@ func _leaf(at: Vector2, hue: float, dead: bool, vel := Vector2.ZERO) -> void:
 	bits.append(b)
 
 
+func sparkle(at: Vector2, hue: float) -> void:
+	for k in 7:
+		var b := Bit.new()
+		b.kind = 2
+		b.pos = at
+		b.vel = Vector2.from_angle(randf() * TAU) * randf_range(20, 70)
+		b.span = randf_range(0.4, 0.8)
+		b.life = b.span
+		b.size = randf_range(1.2, 2.4)
+		b.col = Color.from_hsv(hue, 0.3, 1.0, 0.9)
+		bits.append(b)
+
+
+func rain(at: Vector2) -> void:
+	for k in 2:
+		var b := Bit.new()
+		b.kind = 3
+		b.pos = at + Vector2(randf_range(-38, 38), randf_range(-20, 10))
+		b.vel = Vector2(world.wind_at(at.x) * 0.5, randf_range(420, 560))
+		b.span = 2.0
+		b.life = 2.0
+		b.size = randf_range(7, 13)
+		b.col = Color(0.7, 0.86, 1.0, 0.55)
+		bits.append(b)
+
+
 func swipe(from: Vector2, to: Vector2) -> void:
 	if trail.is_empty():
 		trail.append(from)
@@ -137,6 +164,9 @@ func _process(delta: float) -> void:
 			elif b.kind == 1:
 				b.vel *= 1.0 - minf(1.0, delta * 2.2)
 				b.size += delta * 9.0
+			elif b.kind == 3:
+				if b.pos.y >= soil.ground_y(clampf(b.pos.x, 0.0, world.jar_w)):
+					b.life = 0.0
 			else:
 				b.vel.y += 240.0 * delta
 			b.pos += b.vel * delta
@@ -171,10 +201,29 @@ func _draw() -> void:
 			draw_set_transform(b.pos, b.rot, Vector2(1.0, cos(b.life * 4.0 + b.rot) * 0.7 + 0.3))
 			draw_texture_rect(leaf_tex, Rect2(-b.size * 0.5, -b.size * 0.24, b.size, b.size * 0.48), false, c)
 			draw_set_transform(Vector2.ZERO, 0.0, Vector2.ONE)
-		elif b.kind == 1:
-			draw_circle(b.pos, b.size, c)
+		elif b.kind == 3:
+			draw_line(b.pos, b.pos - b.vel.normalized() * b.size, c, 1.3)
 		else:
 			draw_circle(b.pos, b.size, c)
+	# Props and ties.
+	for br in world.braces:
+		var strain := clampf(br.load, 0.0, 1.0)
+		if br.tie:
+			var mid := (br.a_at + br.b_at) * 0.5
+			var slack := maxf(0.0, br.length - br.a_at.distance_to(br.b_at))
+			mid.y += slack * 1.5 + 2.0
+			var line := PackedVector2Array()
+			for k in 9:
+				var t := k / 8.0
+				line.append(br.a_at.lerp(mid, t).lerp(mid.lerp(br.b_at, t), t))
+			draw_polyline(line, Color(0.92, 0.86, 0.7, 0.85).lerp(Color(1.0, 0.4, 0.3), strain), 1.4)
+			draw_circle(br.a_at, 2.2, Color(0.92, 0.86, 0.7))
+			draw_circle(br.b_at, 2.2, Color(0.92, 0.86, 0.7))
+		else:
+			draw_line(br.b_at, br.a_at, Color(0.62, 0.47, 0.3).lerp(Color(1.0, 0.75, 0.5), strain), 4.0)
+			draw_circle(br.b_at, 3.0, Color(0.5, 0.38, 0.25))
+	if preview.size() == 2:
+		draw_line(preview[0], preview[1], Color(1, 1, 1, 0.5), 1.4)
 	if trail.size() >= 2:
 		draw_polyline(trail, Color(1, 1, 1, clampf(trail_life * 4.0, 0.0, 0.8)), 2.0)
 

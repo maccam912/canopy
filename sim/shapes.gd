@@ -40,7 +40,9 @@ func found(g: Genome, time: float, parent: int, rng: RandomNumberGenerator) -> D
 		"alive": 0,
 		"total": 0,
 		"tallest": 0.0,
-		"stamps": [],
+		"standing": 0,
+		"portrait": PackedFloat32Array(),
+		"leaf": g.h[Genome.LEAF],
 	}
 	list.append(s)
 	return s

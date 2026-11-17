@@ -28,7 +28,26 @@ class SeedBit:
 	var check := 0.0
 
 
+## A prop (a stick wedged between the ground and a trunk) or a tie (a string
+## between two stems). Both only ever add outside forces to the plants they touch.
+class Brace:
+	var tie := false
+	var a: Plant
+	var a_at := Vector2()
+	var b: Plant
+	var b_at := Vector2()      # tie: point on the second plant; prop: the foot on the ground
+	var length := 0.0
+	var stiff := 1.0
+	var limit := 1.0
+	var load := 0.0
+	var broken := false
+
+
 var rng := RandomNumberGenerator.new()
+var braces: Array[Brace] = []
+var census_acc := 0.0
+var shapes_standing := 0
+var tallest_ever := 0.0
 var jar_w := 1500.0
 var jar_h := 780.0
 var lid_y := -780.0
@@ -121,6 +140,7 @@ func _physics_process(delta: float) -> void:
 
 
 func _exit_tree() -> void:
+	braces.clear()
 	for l in logs:
 		l.release()
 	for p in plants:
@@ -145,7 +165,12 @@ func step(dt: float) -> void:
 		compute_light()
 	_gusts(dt)
 	_grow(dt, bdt)
+	_braces(dt)
 	_mech(dt)
+	census_acc += bdt
+	if census_acc > 4.0:
+		census_acc = 0.0
+		_census()
 	var seed_steps := int(ceil(bdt / 0.034))
 	for k in seed_steps:
 		_seeds(bdt / seed_steps)
@@ -421,6 +446,162 @@ func crumble(p: Plant) -> void:
 	remove_plant(p)
 
 
+# ----------------------------------------------------------------- braces ----
+
+## Nearest point on a plant to a world position: [segment, point, distance].
+func nearest_on(p: Plant, at: Vector2) -> Array:
+	var best := -1
+	var best_d := 1e9
+	var best_pt := at
+	for i in p.n:
+		var a := Vector2(p.ax[i], p.ay[i])
+		var b := Vector2(p.bx[i], p.by[i])
+		var pt := Geometry2D.get_closest_point_to_segment(at, a, b)
+		var d := pt.distance_squared_to(at)
+		if d < best_d:
+			best_d = d
+			best = i
+			best_pt = pt
+	return [best, best_pt, sqrt(best_d)]
+
+
+## The plant stem nearest a point, within reach: [plant, segment, point] or [].
+func pick_stem(at: Vector2, reach: float, min_r := 0.0) -> Array:
+	var found := []
+	var best := reach
+	for p in plants:
+		if p.removed or absf(p.base_x - at.x) > p.height + reach + 40.0:
+			continue
+		var hit := nearest_on(p, at)
+		if hit[0] >= 0 and hit[2] < best and p.rad[hit[0]] >= min_r:
+			best = hit[2]
+			found = [p, hit[0], hit[1]]
+	return found
+
+
+## Wedge a stick under a trunk at this point. The foot goes on the side it leans to.
+func add_prop(p: Plant, at: Vector2) -> Brace:
+	var b := Brace.new()
+	b.a = p
+	b.a_at = at
+	var up := soil.ground_y(at.x) - at.y
+	var lean := signf(at.x - p.base_x)
+	if lean == 0.0:
+		lean = signf(p.ang[0]) if p.ang[0] != 0.0 else 1.0
+	var fx := clampf(at.x + lean * maxf(up * 0.45, 14.0), 4.0, jar_w - 4.0)
+	b.b_at = Vector2(fx, soil.ground_y(fx))
+	b.length = at.distance_to(b.b_at)
+	var weight := maxf(p.volume, 200.0) * T.RHO * T.GRAV
+	b.stiff = weight / 4.0
+	b.limit = weight * 2.5
+	braces.append(b)
+	happened.emit("prop", {"x": at.x, "y": at.y})
+	return b
+
+
+## Run a string between two stems. It only pulls, and only when stretched.
+func add_tie(p: Plant, at: Vector2, q: Plant, to: Vector2) -> Brace:
+	var b := Brace.new()
+	b.tie = true
+	b.a = p
+	b.a_at = at
+	b.b = q
+	b.b_at = to
+	b.length = at.distance_to(to) * 1.03
+	var weight := maxf(minf(p.volume, q.volume), 200.0) * T.RHO * T.GRAV
+	b.stiff = weight / 5.0
+	b.limit = weight * 2.0
+	braces.append(b)
+	happened.emit("tie", {"x": at.x, "y": at.y})
+	return b
+
+
+func _braces(_dt: float) -> void:
+	var i := braces.size() - 1
+	while i >= 0:
+		var b := braces[i]
+		var gone := b.a.removed or (b.tie and b.b.removed)
+		if not gone:
+			var ha := nearest_on(b.a, b.a_at)
+			if ha[0] < 0 or ha[2] > 40.0:
+				gone = true
+			else:
+				b.a_at = ha[1]
+				var other := b.b_at
+				var hb := []
+				if b.tie:
+					hb = nearest_on(b.b, b.b_at)
+					if hb[0] < 0 or hb[2] > 40.0:
+						gone = true
+					else:
+						b.b_at = hb[1]
+						other = hb[1]
+				if not gone:
+					var d: Vector2 = b.a_at - other
+					var l := d.length()
+					var stretch := (l - b.length) if b.tie else (b.length - l)
+					if stretch > 0.0 and l > 0.5:
+						var f := b.stiff * stretch
+						b.load = f / b.limit
+						if f > b.limit:
+							gone = true
+						else:
+							# A tie pulls the two points together; a prop pushes the trunk off its foot.
+							var dir := d / l * (-1.0 if b.tie else 1.0)
+							b.a.push(ha[0], b.a_at.x, b.a_at.y, dir.x * f, dir.y * f)
+							if b.tie:
+								b.b.push(hb[0], b.b_at.x, b.b_at.y, -dir.x * f, -dir.y * f)
+					else:
+						b.load = 0.0
+		if gone:
+			b.broken = true
+			braces.remove_at(i)
+			happened.emit("brace_broke", {"x": b.a_at.x, "y": b.a_at.y, "tie": b.tie, "x2": b.b_at.x, "y2": b.b_at.y})
+		i -= 1
+
+
+## Every few seconds: which shapes are standing, and who is the tallest of each.
+func _census() -> void:
+	var best := {}
+	for s in shapes.list:
+		s.standing = 0
+	for p in plants:
+		if not p.alive or p.removed or p.species < 0:
+			continue
+		var s: Dictionary = shapes.list[p.species]
+		if p.mature:
+			s.standing += 1
+		if p.height > tallest_ever:
+			tallest_ever = p.height
+		if p.height > s.tallest * 1.02 and p.mature:
+			if not best.has(p.species) or p.height > best[p.species].height:
+				best[p.species] = p
+	shapes_standing = 0
+	for s in shapes.list:
+		if s.standing > 0:
+			shapes_standing += 1
+	for id: int in best:
+		var p: Plant = best[id]
+		shapes.list[id].tallest = p.height
+		shapes.list[id].portrait = portrait(p)
+	happened.emit("census", {})
+
+
+## A plant's outline, relative to its base: what the field guide draws.
+func portrait(p: Plant) -> PackedFloat32Array:
+	var out := PackedFloat32Array()
+	out.resize(p.n * 6)
+	for i in p.n:
+		var o := i * 6
+		out[o] = p.ax[i] - p.base_x
+		out[o + 1] = p.ay[i] - p.base_y
+		out[o + 2] = p.bx[i] - p.base_x
+		out[o + 3] = p.by[i] - p.base_y
+		out[o + 4] = p.rad[i]
+		out[o + 5] = p.leaf[i]
+	return out
+
+
 # ------------------------------------------------------------------ seeds ----
 
 func spawn_seed(g: Genome, x: float, y: float, vx: float, vy: float, from: Plant) -> SeedBit:
@@ -564,6 +745,8 @@ func on_mature(p: Plant) -> void:
 		p.species = near[0]
 	else:
 		var s := shapes.found(p.genome, time, previous, rng)
+		s.portrait = portrait(p)
+		s.leaf = p.genome.h[Genome.LEAF]
 		p.species = s.id
 		happened.emit("new_shape", {"shape": s, "plant": p})
 	if p.species != previous:
