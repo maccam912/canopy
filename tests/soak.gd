@@ -8,6 +8,7 @@ var limit := 0
 var next_report := 60.0
 var t0 := 0
 var cascades := []
+var verbose := false
 
 
 func _start() -> void:
@@ -24,6 +25,7 @@ func _start() -> void:
 		world.sun_vel = 0.02
 	elif args.size() > 3:
 		world.sun_phi = float(args[3])
+	verbose = args.has("-v")
 	world.happened.connect(_on_event)
 	limit = int(minutes * 60.0 * 60.0 / speed)
 	t0 = Time.get_ticks_msec()
@@ -34,6 +36,8 @@ func _on_event(kind: String, data: Dictionary) -> void:
 		print("  [%5.0fs] new shape: %s  %s" % [world.time, data.shape.name, _fmt(data.shape.h)])
 	elif kind == "cascade_end" and data.count >= 2:
 		cascades.append(data.count)
+	elif kind == "fall" and verbose:
+		print("  [%5.0fs] fall #%d  %s h=%3.0f vol=%5.0f r=%.1f seg %d/%d lean %.2f wood %.2f reach %.2f health %.2f %s" % [world.time, data.count, "UPROOT" if data.uproot else "snap  ", data.height, data.volume, data.r, data.seg, data.segs, data.lean, data.wood, data.reach, data.health, "alive" if data.alive else "dead"])
 	elif kind == "lid":
 		print("  [%5.0fs] touched the lid" % world.time)
 

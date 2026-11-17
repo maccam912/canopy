@@ -16,10 +16,20 @@ func setup(w: World) -> void:
 	sh.code = """
 shader_type canvas_item;
 render_mode blend_add;
-uniform vec4 tint : source_color = vec4(1.0, 0.9, 0.62, 0.24);
+uniform vec4 tint : source_color = vec4(1.0, 0.88, 0.58, 0.2);
+float hash(float n) { return fract(sin(n * 127.1) * 43758.5453); }
+float streak(float x) {
+	float i = floor(x);
+	float f = fract(x);
+	f = f * f * (3.0 - 2.0 * f);
+	return mix(hash(i), hash(i + 1.0), f);
+}
 void fragment() {
+	// UV.x runs along the rays, UV.y across them.
 	float t = texture(TEXTURE, UV).r;
-	COLOR = vec4(tint.rgb, t * t * tint.a);
+	float beams = 0.62 + 0.38 * streak(UV.y * 46.0) + 0.16 * streak(UV.y * 173.0);
+	float reach = mix(1.15, 0.7, UV.x);
+	COLOR = vec4(tint.rgb, t * t * beams * reach * tint.a);
 }
 """
 	mat.shader = sh

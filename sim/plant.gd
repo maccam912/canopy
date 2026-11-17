@@ -101,6 +101,9 @@ var col_shapes: Array[RID] = []
 var col_dirty := true
 var removed := false
 var anchor_k := 0.35
+var fail_at := -1
+var fail_acc := 0.0
+var fail_uproot := false
 
 
 func _init(w: World, g: Genome, x: float, reserve: float) -> void:
@@ -122,7 +125,7 @@ func _derive() -> void:
 	g_reach = lerpf(0.04, 1.0, h[Genome.REACH])
 	fork_p = lerpf(0.02, 0.6, h[Genome.FORK])
 	fork_ang = lerpf(0.3, 1.25, h[Genome.FORK])
-	wood_k = lerpf(0.5, 1.75, h[Genome.WOOD])
+	wood_k = lerpf(0.55, 1.6, h[Genome.WOOD])
 	r_tip = 0.45 + 0.35 * wood_k
 	leaf_w = lerpf(10.0, 28.0, h[Genome.LEAF])
 	leaf_op = lerpf(0.6, 1.0, h[Genome.LEAF])
@@ -131,7 +134,7 @@ func _derive() -> void:
 	root_f = lerpf(0.05, 0.4, h[Genome.ROOT])
 	seed_mass = lerpf(0.12, 1.0, h[Genome.SEED])
 	seed_cost = 70.0 + 650.0 * h[Genome.SEED] * h[Genome.SEED]
-	mature_vol = lerpf(40.0, 5500.0, pow(h[Genome.PATIENCE], 1.6))
+	mature_vol = lerpf(100.0, 14000.0, pow(h[Genome.PATIENCE], 1.6))
 	eff = lerpf(1.0, 0.55, h[Genome.THRIFT])
 	upk = lerpf(1.0, 0.3, h[Genome.THRIFT])
 	vmax = lerpf(6.5, 3.0, h[Genome.THRIFT])
@@ -242,7 +245,7 @@ func grow(dt: float) -> void:
 	# Thickening: each segment wants a cross-section that fits the wood beyond it.
 	var need_thick := 0.0
 	for i in n:
-		var tr := wood_k * (0.7 + 0.118 * pow(dist[i], 0.6))
+		var tr := wood_k * (0.8 + 0.2 * pow(dist[i], 0.6))
 		var r := rad[i]
 		if tr > r:
 			need_thick += T.C_WOOD * (tr * tr - r * r) * slen[i]
@@ -265,13 +268,13 @@ func grow(dt: float) -> void:
 	if need_thick > 0.0 and scale > 0.0:
 		var total_thick := 0.0
 		for i in n:
-			var tr := wood_k * (0.7 + 0.118 * pow(dist[i], 0.6))
+			var tr := wood_k * (0.8 + 0.2 * pow(dist[i], 0.6))
 			var r := rad[i]
 			if tr > r:
 				total_thick += (tr * tr - r * r) * slen[i]
 		var f := minf(1.0, need_thick * scale / maxf(total_thick * T.C_WOOD, 0.001))
 		for i in n:
-			var tr := wood_k * (0.7 + 0.118 * pow(dist[i], 0.6))
+			var tr := wood_k * (0.8 + 0.2 * pow(dist[i], 0.6))
 			var r := rad[i]
 			if tr > r:
 				var r2 := r * r + (tr * tr - r * r) * f
@@ -583,9 +586,9 @@ func _decay(dt: float) -> void:
 			world.on_leaf_drop(self, i)
 			leaf[i] = 0.0
 			dirty = true
-	var stand := 30.0 + sqrt(volume) * 0.9
+	var stand := 30.0 + sqrt(volume) * 0.6
 	health = maxf(0.04, 1.0 - dead_for / stand)
-	if volume < 60.0 and dead_for > 4.0:
+	if volume < 150.0 and dead_for > 4.0:
 		world.crumble(self)
 	elif dead_for > stand * 1.15:
 		world.break_plant(self, 0, false)
@@ -646,6 +649,7 @@ func mech(dt: float, wind: float) -> int:
 	var worst := -1
 	var worst_s := 1.0
 	var moving := 0.0
+	var uprooting := false
 	var top := base_y
 	var strength := T.SIGMA * health
 	max_strain = 0.0
@@ -683,6 +687,14 @@ func mech(dt: float, wind: float) -> int:
 			var c := d * minf(1.0, T.CREEP * (s - 0.4) * dt)
 			rest[k] += c
 			d -= c
+		if k == 0 and s > anchor_k:
+			# The root plate is lifting: the whole plant tilts before it lets go.
+			uprooting = true
+			var over := minf(s / anchor_k - 1.0, 2.0)
+			rest[0] += signf(tau) * (0.12 + 0.5 * over) * dt
+			if s / anchor_k > worst_s:
+				worst_s = s / anchor_k
+				worst = 0
 		defl[k] = d
 		dvel[k] = v
 		var mv := absf(v) + absf(target - d) * 0.5
@@ -697,6 +709,23 @@ func mech(dt: float, wind: float) -> int:
 		if by[k] < top:
 			top = by[k]
 	height = base_y - top
+	# An overloaded joint yields for a moment before it breaks, so a brief
+	# knock is survivable and a real overload creaks first.
+	fail_uproot = false
+	if worst >= 0:
+		if worst != fail_at:
+			fail_at = worst
+			fail_acc = 0.0
+		fail_acc += minf(worst_s - 1.0, 4.0) * dt
+		still = 0
+		if fail_acc < T.YIELD_TIME:
+			worst = -1
+		else:
+			fail_uproot = worst == 0 and uprooting and anchor_k < 1.0
+			fail_at = -1
+			fail_acc = 0.0
+	elif fail_acc > 0.0:
+		fail_acc = maxf(0.0, fail_acc - dt * 0.5)
 	if moving < 0.004:
 		still += 1
 		if still > 24:

@@ -86,8 +86,8 @@ func setup(w: World, data: PackedFloat32Array, com: Vector2, vel: Vector2, spin:
 		cs.rotation = (b - a).angle() + PI * 0.5
 		add_child(cs)
 		shapes += 1
-	rot_time = 22.0 + sqrt(volume) * 1.1
-	big = volume > 250.0
+	rot_time = 22.0 + sqrt(volume) * 0.75
+	big = volume > T.FALL_VOL
 	linear_damp = 0.05
 	angular_damp = 0.15
 
@@ -96,7 +96,7 @@ func _integrate_forces(state: PhysicsDirectBodyState2D) -> void:
 	var dt := state.step
 	# Leaves catch the air, so a crown comes down slower than a bare pole.
 	if leaf_area > 0.0:
-		var drag := minf(leaf_area * 0.9 / mass, 2.5)
+		var drag := minf(leaf_area * 2.2 / mass, 2.5)
 		state.linear_velocity -= state.linear_velocity * minf(1.0, drag * dt)
 		state.angular_velocity -= state.angular_velocity * minf(1.0, drag * 0.6 * dt)
 	var speed := state.linear_velocity.length() + absf(state.angular_velocity) * length * 0.5

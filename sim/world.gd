@@ -251,10 +251,8 @@ func _mech(dt: float) -> void:
 			continue
 		var failed := p.mech(dt, wind_at(p.base_x))
 		p.sync_body()
-		if p.strain[0] > p.anchor_ratio():
-			break_plant(p, 0, true)
-		elif failed >= 0:
-			break_plant(p, failed, false)
+		if failed >= 0:
+			break_plant(p, failed, p.fail_uproot)
 
 
 func wind_at(x: float) -> float:
@@ -341,10 +339,10 @@ func break_plant(p: Plant, i: int, uproot: bool, cut := -1.0, kick := 0.0) -> Lo
 	var carried := ripe if whole else int(round(ripe * share))
 	var was_alive := p.alive
 	var height := p.height
-	var info := {"plant": p.id, "x": joint_at.x, "y": joint_at.y, "volume": vol, "uproot": uproot, "snip": cut >= 0.0, "whole": whole, "height": height, "alive": was_alive, "species": p.species}
+	var info := {"wood": p.genome.h[Genome.WOOD], "reach": p.genome.h[Genome.REACH], "r": p.rad[i], "seg": i, "segs": p.n, "lean": p.ang[i], "health": p.health, "plant": p.id, "x": joint_at.x, "y": joint_at.y, "volume": vol, "uproot": uproot, "snip": cut >= 0.0, "whole": whole, "height": height, "alive": was_alive, "species": p.species}
 
 	var body: LogBody = null
-	if vol < 25.0:
+	if vol < T.LITTER_VOL:
 		# Too small to be an object: it crumbles straight into litter.
 		soil.add(com.x - 10.0, com.x + 10.0, part_nutrient + leaves * T.LEAF_N)
 		happened.emit("litter", {"x": com.x, "y": com.y, "hue": p.genome.hue, "leaves": leaves})
@@ -395,7 +393,7 @@ func break_plant(p: Plant, i: int, uproot: bool, cut := -1.0, kick := 0.0) -> Lo
 		p.col_dirty = true
 		if was_alive:
 			p.falls_survived += 1
-	if vol >= 250.0:
+	if vol >= T.FALL_VOL:
 		count_falls += 1
 		if clock - cascade_clock > 6.0:
 			cascade.clear()

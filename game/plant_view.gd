@@ -51,7 +51,7 @@ func _draw() -> void:
 	if p.rad[0] > 1.4:
 		draw_circle(Vector2(p.base_x, p.base_y), p.rad[0], w_col)
 	var big := p.genome.h[Genome.LEAF]
-	var count := 1 if big > 0.6 else (2 if big > 0.3 else 3)
+	var count := 2 if big > 0.5 else 3
 	for i in n:
 		var lw := p.leaf[i]
 		if lw <= 0.0:
@@ -65,13 +65,11 @@ func _draw() -> void:
 			col.a = 1.0
 		var at := Vector2(p.bx[i], p.by[i])
 		var dir := p.ang[i] - PI * 0.5
-		var size := lw * (1.0 if count == 1 else (0.78 if count == 2 else 0.62))
+		var size := lw * (0.95 if count == 2 else 0.7)
 		for k in count:
 			var spread := 0.0
-			if count == 1:
-				spread = 0.9 if (i % 2 == 0) else -0.9
-			elif count == 2:
-				spread = -0.8 + 1.6 * k
+			if count == 2:
+				spread = -0.85 + 1.7 * k
 			else:
 				spread = -1.1 + 1.1 * k
 			draw_set_transform(at, dir + spread, Vector2.ONE)

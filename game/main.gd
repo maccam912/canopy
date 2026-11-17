@@ -29,6 +29,11 @@ var shot_path := ""
 var shot_frames := 0
 var smoke := false
 var shot_done := false
+var film_prefix := ""
+var film_start := 0
+var film_count := 0
+var film_every := 10
+var film_taken := 0
 var frame := 0
 
 
@@ -48,6 +53,13 @@ func _ready() -> void:
 				shot_path = args[k + 1]
 				shot_frames = int(float(args[k + 2]) * 60.0)
 				k += 2
+			"--film":
+				# --film prefix start_seconds count every_frames: snip the tallest plant, save frames.
+				film_prefix = args[k + 1]
+				film_start = int(float(args[k + 2]) * 60.0)
+				film_count = int(args[k + 3])
+				film_every = int(args[k + 4])
+				k += 4
 			"--seed":
 				world_seed = int(args[k + 1])
 				k += 1
@@ -143,8 +155,10 @@ func _process(delta: float) -> void:
 	if gesture == "hold" and not holding_fast and Time.get_ticks_msec() * 0.001 - down_time > 0.32:
 		holding_fast = true
 	var want := FAST if (fast_latch or holding_fast or Input.is_key_pressed(KEY_SPACE)) else 1.0
-	if not smoke and shot_path == "":
+	if not smoke and shot_path == "" and film_prefix == "":
 		world.speed = want
+	if film_prefix != "":
+		_film()
 	if smoke and frame >= 600:
 		print("CANOPY_SMOKE_PASS plants=%d t=%.0f" % [world.plants.size(), world.time])
 		get_tree().quit()
@@ -154,6 +168,28 @@ func _process(delta: float) -> void:
 		get_viewport().get_texture().get_image().save_png(shot_path)
 		print("SHOT ", shot_path, " t=", world.time, " plants=", world.plants.size(), " logs=", world.logs.size(), " falls=", world.count_falls, " fps=", Engine.get_frames_per_second())
 		get_tree().quit()
+
+
+func _film() -> void:
+	if frame == film_start:
+		Engine.time_scale = 1.0
+		Engine.physics_ticks_per_second = 60
+		world.speed = 1.0
+		var best: Plant = null
+		for p in world.plants:
+			if p.alive and (best == null or p.height > best.height):
+				best = p
+		if best != null:
+			var toward := 1.0 if best.base_x < world.jar_w * 0.5 else -1.0
+			world.snip(best, 0, 0.6, toward)
+	if frame >= film_start and (frame - film_start) % film_every == 0 and film_taken < film_count:
+		film_taken += 1
+		var n := film_taken
+		await RenderingServer.frame_post_draw
+		get_viewport().get_texture().get_image().save_png("%s%02d.png" % [film_prefix, n])
+		if n == film_count:
+			print("FILM done t=", world.time, " falls=", world.count_falls, " best=", world.best_cascade)
+			get_tree().quit()
 
 
 # ------------------------------------------------------------------ input ----
