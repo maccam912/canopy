@@ -9,6 +9,8 @@ var failures := 0
 var cut_height := 0.0
 var logs_before := 0
 var target: Plant
+var owl_at := -1
+var fall_at := -1
 
 
 func check(ok: bool, what: String) -> void:
@@ -106,12 +108,23 @@ func _process(_delta: float) -> bool:
 						target = p
 				stage = 2
 				frames = 0
+				# Seat an owl in it: the owl should leave before the tree comes down.
+				var owl := world.visitors._add(Visitors.OWL, Vector2(target.bx[0], target.by[0]))
+				owl.plant = target
+				owl.seg = world.visitors._perch_seg(target)
+				owl.state = "sit"
+				world.happened.connect(func(k: String, d: Dictionary) -> void:
+					if k == "owl_left" and owl_at < 0:
+						owl_at = frames
+					elif (k == "fall" or k == "break") and d.plant == target.id and fall_at < 0:
+						fall_at = frames)
 		2:
-			if not target.removed and target.n > 1:
+			if not target.removed and target.n > 1 and frames > 30:
 				var top := target.n - 1
 				target.push(top, target.bx[top], target.by[top], 4.0e6 * target.rad[0], 0.0)
 			if target.removed or target.falls_survived > 0:
 				check(true, "an overloaded trunk snaps or uproots")
+				check(owl_at >= 0 and owl_at < fall_at, "the owl leaves before its tree falls (left at frame %d, fell at %d)" % [owl_at, fall_at])
 				stage = 3
 				frames = 0
 			elif frames > 600:

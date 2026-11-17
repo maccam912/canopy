@@ -10,6 +10,9 @@ var t0 := 0
 var cascades := []
 var verbose := false
 var grips := 0
+var visits := {}
+var min_alive := 999
+var owl_left := {}
 var last_frames := 0
 var last_ms := 0
 
@@ -29,6 +32,9 @@ func _start() -> void:
 	elif args.size() > 3:
 		world.sun_phi = float(args[3])
 	verbose = args.has("-v")
+	for a in args:
+		if a.begins_with("collider="):
+			world.collider_r = float(a.substr(9))
 	world.happened.connect(_on_event)
 	limit = int(minutes * 60.0 * 60.0 / speed)
 	t0 = Time.get_ticks_msec()
@@ -41,6 +47,16 @@ func _on_event(kind: String, data: Dictionary) -> void:
 		cascades.append(data.count)
 	elif kind == "fall" and verbose:
 		print("  [%5.0fs] fall #%d  %s h=%3.0f vol=%5.0f r=%.1f seg %d/%d lean %.2f wood %.2f reach %.2f health %.2f %s" % [world.time, data.count, "UPROOT" if data.uproot else "snap  ", data.height, data.volume, data.r, data.seg, data.segs, data.lean, data.wood, data.reach, data.health, "alive" if data.alive else "dead"])
+	elif kind == "visitor":
+		visits[data.kind] = visits.get(data.kind, 0) + 1
+		if data.kind == "owl":
+			print("  [%5.0fs] owl arrives on plant %d (h %.0f, age %.0f)" % [world.time, data.plant.id, data.plant.height, data.plant.age])
+	elif kind == "owl_left":
+		owl_left[data.plant.id] = world.time
+		print("  [%5.0fs] owl leaves plant %d (alive %s strain %.2f)" % [world.time, data.plant.id, data.plant.alive, data.plant.max_strain])
+	elif kind in ["fall", "break"] and owl_left.has(data.plant):
+		print("  [%5.0fs] ...and plant %d %s %.0f s after the owl left" % [world.time, data.plant, kind, world.time - owl_left[data.plant]])
+		owl_left.erase(data.plant)
 	elif kind == "grip":
 		grips += 1
 	elif kind == "lid":
@@ -86,6 +102,8 @@ func _process(_delta: float) -> bool:
 				strain = maxf(strain, p.max_strain)
 				if p.height > 40.0:
 					kinds[p.species] = kinds.get(p.species, 0) + 1
+		if world.time > 240.0:
+			min_alive = mini(min_alive, world.living())
 		var rest := 0
 		var dark := 0
 		var taken := 0
@@ -97,6 +115,11 @@ func _process(_delta: float) -> bool:
 					taken += 1
 				elif world.soil.light[c] < lerpf(0.3, 0.05, sd.genome.h[Genome.THRIFT]):
 					dark += 1
+		var ages := []
+		for p in world.plants:
+			if p.alive and p.height > 160.0:
+				ages.append("%d/%.2f" % [int(p.age), p.max_strain])
+		print("     tall plants age/strain: ", " ".join(ages))
 		print("     seeds resting %d  blocked-by-plant %d  too-dark %d" % [rest, taken, dark])
 		var rich := 0.0
 		for r in world.soil.rich:
@@ -106,7 +129,7 @@ func _process(_delta: float) -> bool:
 			world.count_falls, world.best_cascade, world.shapes.list.size(), kinds.size(), rich / world.soil.n / T.RICH0, strain,
 			float(Time.get_ticks_msec() - t0) / frames])
 	if frames >= limit:
-		print("cascades: ", cascades, "  grips made: ", grips)
+		print("min alive ", min_alive, "  cascades: ", cascades, "  grips made: ", grips, "  visitors: ", visits, "  beetle-sped logs rotted: ", world.count_rotted)
 		for s in world.shapes.list:
 			print("  %-18s alive %3d total %4d tallest %4.0f  %s" % [s.name, s.alive, s.total, s.tallest, _fmt(s.h)])
 		print("SOAK_DONE born %d died %d rotted %d falls %d" % [world.count_born, world.count_died, world.count_rotted, world.count_falls])

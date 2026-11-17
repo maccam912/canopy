@@ -27,6 +27,7 @@ var world: World
 var back: JarBack
 var front: JarFront
 var fx: Fx
+var visitor_view: VisitorView
 var hud: Hud
 var sound: Sound
 var plant_layer: Node2D
@@ -151,6 +152,8 @@ func _ready() -> void:
 	plant_layer = Node2D.new()
 	fx = Fx.new()
 	fx.z_index = 3
+	visitor_view = VisitorView.new()
+	visitor_view.z_index = 4
 	front = JarFront.new()
 	front.z_index = 6
 	hud = Hud.new()
@@ -159,6 +162,7 @@ func _ready() -> void:
 	add_child(plant_layer)
 	add_child(world)
 	add_child(fx)
+	add_child(visitor_view)
 	add_child(front)
 	add_child(hud)
 	add_child(sound)
@@ -171,6 +175,7 @@ func _ready() -> void:
 	back.setup(world)
 	front.setup(world)
 	fx.setup(world)
+	visitor_view.setup(world)
 	sound.setup(world)
 	sound.muted = smoke
 	if saved.is_empty():
@@ -355,7 +360,7 @@ func _process(delta: float) -> void:
 			save_game()
 		await RenderingServer.frame_post_draw
 		get_viewport().get_texture().get_image().save_png(shot_path)
-		print("SHOT ", shot_path, " t=", world.time, " plants=", world.plants.size(), " logs=", world.logs.size(), " falls=", world.count_falls, " fps=", Engine.get_frames_per_second())
+		print("SHOT ", shot_path, " t=", world.time, " plants=", world.plants.size(), " logs=", world.logs.size(), " falls=", world.count_falls, " fps=", Engine.get_frames_per_second(), " visitors=", world.visitors.counts)
 		get_tree().quit()
 
 
@@ -465,6 +470,29 @@ func _on_event(kind: String, d: Dictionary) -> void:
 			_grant("lid")
 		"impact":
 			shake = maxf(shake, clampf(d.volume / 7000.0, 0.0, 1.0) * clampf(d.speed / 200.0, 0.2, 1.0))
+		"visitor":
+			var lines := {
+				"fireflies": ["fireflies", "Fireflies have found the new gap."],
+				"beetles": ["beetles", "Beetles have come for the rotting wood."],
+				"bird": ["bird", "A bird has come to sit in the tallest crown."],
+				"squirrel": ["squirrel", "A squirrel has come for the plump seeds."],
+				"owl": ["owl", "An owl has settled in an old tree."],
+			}
+			var line: Array = lines[d.kind]
+			if _first("visit_" + line[0], line[1].to_lower().trim_suffix(".")):
+				hud.say(line[1], "", 4.0)
+			if d.kind == "owl":
+				sound.play("hoot", 1.0, -14.0)
+			elif d.kind == "bird":
+				sound.play("chirp", randf_range(0.9, 1.2), -18.0)
+		"owl_left":
+			sound.play("hoot", 0.85, -10.0)
+			hud.say("The owl has left its tree.", "", 4.0)
+			_first("owl_left", "an owl left its tree.")
+		"bird_startled":
+			sound.play("chirp", 1.4, -14.0)
+		"bird_drop", "buried":
+			sound.play("pop", 0.7, -24.0)
 		"brace_broke":
 			if not d.grip:
 				sound.play("snap", 1.8, -12.0)

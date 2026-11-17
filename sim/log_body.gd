@@ -27,6 +27,7 @@ var big := false
 var peak_speed := 0.0
 var beetles := 0.0
 var is_prop := false
+var resting := 0.0
 
 
 func setup(w: World, data: PackedFloat32Array, com: Vector2, vel: Vector2, spin: float) -> void:
@@ -118,11 +119,18 @@ func _integrate_forces(state: PhysicsDirectBodyState2D) -> void:
 				var f := -state.get_contact_impulse(i) / dt
 				plant.push(plant.seg_near(pos), pos.x, pos.y, f.x, f.y)
 			touching = 0.6
-		elif not landed:
-			var other := instance_from_id(state.get_contact_collider_id(i))
-			if other is LogBody and other.landed:
+		elif not landed and instance_from_id(state.get_contact_collider_id(i)) is LogBody:
+			landed = true
+			world.on_log_landed(self, pos, peak_speed)
+	# Wood that has come to rest anywhere (propped on stems, say) is down too.
+	if not landed:
+		if speed < 6.0 and age > 1.0:
+			resting += dt
+			if resting > 1.0:
 				landed = true
-				world.on_log_landed(self, pos, peak_speed)
+				world.on_log_landed(self, global_position, peak_speed)
+		else:
+			resting = 0.0
 
 
 func tick(dt: float) -> void:

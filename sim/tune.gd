@@ -11,7 +11,7 @@ const E := 1.0e8             # stiffness: joint spring = E r^4 / len
 const SIGMA := 1.1e6         # strength: joint breaks at SIGMA r^3
 const ZETA := 0.55           # sway damping ratio
 const CREEP := 0.5           # how fast strained wood takes a permanent set
-const COLLIDER_R := 1.2      # stems thinner than this let falling wood through
+const COLLIDER_R := 2.2      # stems thinner than this let falling wood through (saplings survive a domino run)
 const GROUND_K := 0.2
 const PUSH_GAIN := 0.08     # share of an outside force a stem takes up each step
 

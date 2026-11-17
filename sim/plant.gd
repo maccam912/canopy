@@ -345,7 +345,7 @@ func grow(dt: float) -> void:
 				var r2 := r * r + (tr * tr - r * r) * f
 				gained_vol += (r2 - r * r) * slen[i]
 				var nr := sqrt(r2)
-				if nr > T.COLLIDER_R and (r <= T.COLLIDER_R or nr > r * 1.08):
+				if nr > world.collider_r and (r <= world.collider_r or nr > r * 1.08):
 					col_dirty = true
 				rad[i] = nr
 		spent += gained_vol * T.C_WOOD
@@ -901,7 +901,7 @@ func _rebuild_body() -> void:
 	col_a.clear()
 	col_l.clear()
 	for i in n:
-		if rad[i] >= T.COLLIDER_R and slen[i] > 4.0:
+		if rad[i] >= world.collider_r and slen[i] > 4.0:
 			var shape := PhysicsServer2D.rectangle_shape_create()
 			PhysicsServer2D.shape_set_data(shape, Vector2(rad[i], slen[i] * 0.5))
 			var cx := (ax[i] + bx[i]) * 0.5

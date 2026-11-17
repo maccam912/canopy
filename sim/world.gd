@@ -53,6 +53,7 @@ var debug_no_log_push := false
 var debug_no_gusts := false
 var debug_no_grow := false
 var prof := {}
+var collider_r := T.COLLIDER_R
 var grip_acc := 0.0
 var shapes_standing := 0
 var tallest_ever := 0.0
@@ -68,6 +69,7 @@ var seeds: Array[SeedBit] = []
 var body_plant := {}
 var ground_rid := RID()
 var wall_rid := RID()
+var visitors: Visitors
 var occupied := PackedInt32Array()
 var seed_cols := PackedInt32Array()
 
@@ -110,6 +112,7 @@ func setup(p_seed: int, w := 1500.0, h := 780.0, state := {}) -> void:
 		jar_h = state.jar_h
 	lid_y = -jar_h
 	soil.setup(jar_w, rng)
+	visitors = Visitors.new(self)
 	occupied.resize(soil.n)
 	seed_cols.resize(soil.n)
 	if not state.is_empty():
@@ -327,6 +330,7 @@ func step(dt: float) -> void:
 	var seed_steps := int(ceil(bdt / 0.034))
 	for k in seed_steps:
 		_seeds(bdt / seed_steps)
+	visitors.step(dt, bdt)
 	var tl := Time.get_ticks_usec()
 	_logs(dt, bdt)
 	prof["logs"] = prof.get("logs", 0) + Time.get_ticks_usec() - tl

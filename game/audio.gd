@@ -29,6 +29,8 @@ func setup(w: World) -> void:
 	bank["chime"] = _chime()
 	bank["pop"] = _pop()
 	bank["drip"] = _drip()
+	bank["hoot"] = _hoot()
+	bank["chirp"] = _chirp()
 	for k in 14:
 		var p := AudioStreamPlayer.new()
 		add_child(p)
@@ -249,6 +251,42 @@ func _drip() -> AudioStreamWAV:
 	for i in n:
 		var t := float(i) / RATE
 		out[i] = sin(TAU * (900.0 + 3500.0 * t) * t) * exp(-t * 30.0) * 0.45
+	return _wav(out)
+
+
+## Two soft, breathy notes, the second lower.
+func _hoot() -> AudioStreamWAV:
+	var n := int(RATE * 1.3)
+	var out := PackedFloat32Array()
+	out.resize(n)
+	var ph := 0.0
+	for i in n:
+		var t := float(i) / RATE
+		var f := 0.0
+		var env := 0.0
+		if t < 0.42:
+			f = 400.0 - 20.0 * t
+			env = sin(PI * t / 0.42)
+		elif t > 0.55:
+			var u := t - 0.55
+			f = 360.0 - 30.0 * u
+			env = sin(PI * minf(u / 0.7, 1.0))
+		ph += TAU * f / RATE
+		out[i] = (sin(ph) + 0.15 * sin(ph * 2.0)) * env * env * 0.45
+	return _wav(out)
+
+
+func _chirp() -> AudioStreamWAV:
+	var n := int(RATE * 0.35)
+	var out := PackedFloat32Array()
+	out.resize(n)
+	var ph := 0.0
+	for i in n:
+		var t := float(i) / RATE
+		var k := fposmod(t, 0.11)
+		var env := sin(PI * minf(k / 0.08, 1.0)) if k < 0.08 else 0.0
+		ph += TAU * (3200.0 + 2200.0 * sin(k * 60.0)) / RATE
+		out[i] = sin(ph) * env * 0.3
 	return _wav(out)
 
 
