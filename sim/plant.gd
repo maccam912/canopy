@@ -100,6 +100,7 @@ var col_seg := PackedInt32Array()
 var col_shapes: Array[RID] = []
 var col_dirty := true
 var removed := false
+var grips := 0
 var anchor_k := 0.35
 var fail_at := -1
 var fail_acc := 0.0

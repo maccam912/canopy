@@ -41,11 +41,13 @@ class Brace:
 	var limit := 1.0
 	var load := 0.0
 	var broken := false
+	var grip := false          # made by the plant itself: a thin stem tangled in a stouter one
 
 
 var rng := RandomNumberGenerator.new()
 var braces: Array[Brace] = []
 var census_acc := 0.0
+var grip_acc := 0.0
 var shapes_standing := 0
 var tallest_ever := 0.0
 var jar_w := 1500.0
@@ -143,6 +145,8 @@ func save_state() -> Dictionary:
 			"nutrient": l.nutrient, "rot": l.rot, "age": l.age, "seeds": l.seeds, "landed": l.landed, "flung": l.flung})
 	var bs := []
 	for b in braces:
+		if b.grip:
+			continue
 		bs.append({"tie": b.tie, "a": b.a.id, "a_at": b.a_at, "b": b.b.id if b.tie else -1, "b_at": b.b_at, "length": b.length, "stiff": b.stiff, "limit": b.limit})
 	return {
 		"version": 1, "jar_w": jar_w, "jar_h": jar_h, "time": time, "clock": clock, "sun_phi": sun_phi, "sun_vel": sun_vel,
@@ -292,6 +296,10 @@ func step(dt: float) -> void:
 	_grow(dt, bdt)
 	_braces(dt)
 	_mech(dt)
+	grip_acc += dt
+	if grip_acc > 0.5:
+		grip_acc = 0.0
+		_grips()
 	census_acc += bdt
 	if census_acc > 4.0:
 		census_acc = 0.0
@@ -641,6 +649,82 @@ func add_tie(p: Plant, at: Vector2, q: Plant, to: Vector2) -> Brace:
 	return b
 
 
+## Vines come free from the physics: a thin stem that touches a much stouter
+## trunk tangles with it and hangs its weight there.
+func _grips() -> void:
+	var total := 0
+	for p in plants:
+		p.grips = 0
+	for b in braces:
+		if b.grip:
+			total += 1
+			b.a.grips += 1
+	if total >= 70:
+		return
+	var cell := 48.0
+	var grid := {}
+	for p in plants:
+		if p.removed:
+			continue
+		for i in p.n:
+			if p.rad[i] >= 2.4:
+				var key := Vector2i(int(floor((p.ax[i] + p.bx[i]) * 0.5 / cell)), int(floor((p.ay[i] + p.by[i]) * 0.5 / cell)))
+				if not grid.has(key):
+					grid[key] = []
+				grid[key].append([p, i])
+	if grid.is_empty():
+		return
+	for p in plants:
+		if p.removed or not p.alive or p.grips >= 4 or p.n < 4:
+			continue
+		for i in p.n:
+			if p.kids[i] != 0 or p.rad[i] > 1.8:
+				continue
+			var at := Vector2(p.bx[i], p.by[i])
+			if at.y > p.base_y - 45.0:
+				continue
+			var home := Vector2i(int(floor(at.x / cell)), int(floor(at.y / cell)))
+			var done := false
+			for oy in range(-1, 2):
+				for ox in range(-1, 2):
+					var found: Variant = grid.get(home + Vector2i(ox, oy))
+					if found == null or done:
+						continue
+					for entry: Array in found:
+						var q: Plant = entry[0]
+						var j: int = entry[1]
+						if q == p or q.removed or j >= q.n or q.rad[j] < p.rad[i] * 2.0:
+							continue
+						var pt := Geometry2D.get_closest_point_to_segment(at, Vector2(q.ax[j], q.ay[j]), Vector2(q.bx[j], q.by[j]))
+						if at.distance_to(pt) > q.rad[j] + 6.0:
+							continue
+						var near := false
+						for b in braces:
+							if b.grip and b.a == p and b.a_at.distance_to(at) < 45.0:
+								near = true
+								break
+						if near:
+							continue
+						var g := Brace.new()
+						g.tie = true
+						g.grip = true
+						g.a = p
+						g.a_at = at
+						g.b = q
+						g.b_at = pt
+						g.length = at.distance_to(pt) + 2.0
+						var weight := maxf(p.volume, 80.0) * T.RHO * T.GRAV
+						g.stiff = weight / 4.0
+						g.limit = weight * 5.0
+						braces.append(g)
+						p.grips += 1
+						done = true
+						happened.emit("grip", {"plant": p, "host": q, "x": pt.x, "y": pt.y})
+						break
+			if p.grips >= 4:
+				break
+
+
 func _braces(_dt: float) -> void:
 	var i := braces.size() - 1
 	while i >= 0:
@@ -681,7 +765,7 @@ func _braces(_dt: float) -> void:
 		if gone:
 			b.broken = true
 			braces.remove_at(i)
-			happened.emit("brace_broke", {"x": b.a_at.x, "y": b.a_at.y, "tie": b.tie, "x2": b.b_at.x, "y2": b.b_at.y})
+			happened.emit("brace_broke", {"x": b.a_at.x, "y": b.a_at.y, "tie": b.tie, "grip": b.grip, "x2": b.b_at.x, "y2": b.b_at.y})
 		i -= 1
 
 
@@ -869,7 +953,7 @@ func on_mature(p: Plant) -> void:
 	if near[0] >= 0 and near[1] < Shapes.RADIUS:
 		p.species = near[0]
 	else:
-		var s := shapes.found(p.genome, time, previous, rng)
+		var s := shapes.found(p.genome, time, previous, rng, p.grips >= 2)
 		s.portrait = portrait(p)
 		s.leaf = p.genome.h[Genome.LEAF]
 		p.species = s.id

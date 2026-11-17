@@ -9,6 +9,7 @@ var next_report := 60.0
 var t0 := 0
 var cascades := []
 var verbose := false
+var grips := 0
 
 
 func _start() -> void:
@@ -38,6 +39,8 @@ func _on_event(kind: String, data: Dictionary) -> void:
 		cascades.append(data.count)
 	elif kind == "fall" and verbose:
 		print("  [%5.0fs] fall #%d  %s h=%3.0f vol=%5.0f r=%.1f seg %d/%d lean %.2f wood %.2f reach %.2f health %.2f %s" % [world.time, data.count, "UPROOT" if data.uproot else "snap  ", data.height, data.volume, data.r, data.seg, data.segs, data.lean, data.wood, data.reach, data.health, "alive" if data.alive else "dead"])
+	elif kind == "grip":
+		grips += 1
 	elif kind == "lid":
 		print("  [%5.0fs] touched the lid" % world.time)
 
@@ -93,7 +96,7 @@ func _process(_delta: float) -> bool:
 			world.count_falls, world.best_cascade, world.shapes.list.size(), kinds.size(), rich / world.soil.n / T.RICH0, strain,
 			float(Time.get_ticks_msec() - t0) / frames])
 	if frames >= limit:
-		print("cascades: ", cascades)
+		print("cascades: ", cascades, "  grips made: ", grips)
 		for s in world.shapes.list:
 			print("  %-18s alive %3d total %4d tallest %4.0f  %s" % [s.name, s.alive, s.total, s.tallest, _fmt(s.h)])
 		print("SOAK_DONE born %d died %d rotted %d falls %d" % [world.count_born, world.count_died, world.count_rotted, world.count_falls])

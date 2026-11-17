@@ -462,7 +462,11 @@ func _on_event(kind: String, d: Dictionary) -> void:
 		"impact":
 			shake = maxf(shake, clampf(d.volume / 7000.0, 0.0, 1.0) * clampf(d.speed / 200.0, 0.2, 1.0))
 		"brace_broke":
-			sound.play("snap", 1.8, -12.0)
+			if not d.grip:
+				sound.play("snap", 1.8, -12.0)
+		"grip":
+			if d.plant.grips >= 2:
+				_first("vine", "the first vine: a plant riding on a %s." % _shape_name(d.host.species))
 		"census":
 			records.tallest = world.tallest_ever
 			if world.shapes_standing >= 4:
@@ -791,8 +795,17 @@ func _prop_tap(at: Vector2) -> void:
 
 
 func _trim_braces() -> void:
-	while world.braces.size() > 8:
-		world.braces.pop_front()
+	var mine := 0
+	for b in world.braces:
+		if not b.grip:
+			mine += 1
+	var i := 0
+	while mine > 8 and i < world.braces.size():
+		if not world.braces[i].grip:
+			world.braces.remove_at(i)
+			mine -= 1
+		else:
+			i += 1
 
 
 func _pour(delta: float) -> void:

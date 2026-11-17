@@ -222,7 +222,11 @@ func _draw() -> void:
 	# Props and ties.
 	for br in world.braces:
 		var strain := clampf(br.load, 0.0, 1.0)
-		if br.tie:
+		if br.grip:
+			# A tendril: a small curl where the vine holds its host.
+			draw_arc(br.b_at, 3.0, 0.0, TAU * 0.8, 10, Color.from_hsv(br.a.genome.hue, 0.5, 0.75, 0.9), 1.2)
+			draw_line(br.a_at, br.b_at, Color.from_hsv(br.a.genome.hue, 0.45, 0.6, 0.7), 1.0)
+		elif br.tie:
 			var mid := (br.a_at + br.b_at) * 0.5
 			var slack := maxf(0.0, br.length - br.a_at.distance_to(br.b_at))
 			mid.y += slack * 1.5 + 2.0

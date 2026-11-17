@@ -29,10 +29,11 @@ func classify(g: Genome, hint: int) -> int:
 	return near[0] if near[1] < RADIUS else -1
 
 
-func found(g: Genome, time: float, parent: int, rng: RandomNumberGenerator) -> Dictionary:
+func found(g: Genome, time: float, parent: int, rng: RandomNumberGenerator, vine := false) -> Dictionary:
 	var s := {
 		"id": list.size(),
-		"name": _name(g, rng),
+		"name": _name(g, rng, vine),
+		"vine": vine,
 		"h": g.h.duplicate(),
 		"hue": g.hue,
 		"born": time,
@@ -48,14 +49,16 @@ func found(g: Genome, time: float, parent: int, rng: RandomNumberGenerator) -> D
 	return s
 
 
-func _name(g: Genome, rng: RandomNumberGenerator) -> String:
+func _name(g: Genome, rng: RandomNumberGenerator, vine := false) -> String:
 	var h := g.h
 	var nouns: Array
 	var reach := h[Genome.REACH]
 	var fork := h[Genome.FORK]
 	var wood := h[Genome.WOOD]
 	var leaf := h[Genome.LEAF]
-	if h[Genome.PATIENCE] < 0.15:
+	if vine:
+		nouns = ["Vine", "Creeper", "Bine", "Tendril", "Climber"]
+	elif h[Genome.PATIENCE] < 0.15:
 		nouns = ["Weed", "Tuft", "Sprig", "Scrub", "Whisker"]
 	elif h[Genome.THRIFT] > 0.8:
 		nouns = ["Lurker", "Sleeper", "Hermit", "Shadecap", "Moss-arm"]
@@ -74,6 +77,8 @@ func _name(g: Genome, rng: RandomNumberGenerator) -> String:
 	else:
 		nouns = ["Bough", "Sapling", "Crown", "Antler", "Fork"]
 	var adjs: Array = []
+	if vine:
+		adjs += ["Hanging", "Clinging", "Riding"]
 	if wood < 0.25:
 		adjs += ["Hanging", "Trembling", "Thin", "Limp"]
 	if wood > 0.75:
