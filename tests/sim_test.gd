@@ -10,6 +10,7 @@ var cut_height := 0.0
 var logs_before := 0
 var target: Plant
 var owl_at := -1
+var cut_log: LogBody
 var fall_at := -1
 
 
@@ -89,7 +90,7 @@ func _process(_delta: float) -> bool:
 				cut_height = target.height
 				logs_before = world.logs.size()
 				world.speed = 1.0
-				world.snip(target, 0, 0.5)
+				cut_log = world.snip(target, 0, 0.5)
 				stage = 1
 				frames = 0
 		1:
@@ -97,7 +98,7 @@ func _process(_delta: float) -> bool:
 				check(world.logs.size() == logs_before + 1, "a snip turns the cut part into fallen wood")
 				check(target.removed or target.height < cut_height * 0.5, "the snipped plant is shorter")
 			if frames >= 420:
-				var l := world.logs[world.logs.size() - 1] if not world.logs.is_empty() else null
+				var l: LogBody = cut_log if is_instance_valid(cut_log) else null
 				if l != null and not l.landed:
 					print("   log pos ", l.position, " rot ", l.rotation, " vel ", l.linear_velocity, " sleeping ", l.sleeping, " hinged ", l.joint.is_valid(), " touching ", l.touching, " colliding ", l.get_colliding_bodies().size(), " ground ", world.soil.ground_y(l.position.x), " len ", l.length)
 				check(l != null and l.landed, "the cut wood reached the ground")
