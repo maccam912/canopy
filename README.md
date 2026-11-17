@@ -45,5 +45,19 @@ godot --headless --fixed-fps 60 --script res://tests/soak.gd -- 60 8 1
 ```
 
 (minutes of forest time, speed, seed). Everything tunable is in `sim/tune.gd`.
-All art and sound are generated in code; there are no binary assets, but Git
-LFS is configured for any that get added.
+To measure how much standing plants and fallen logs shake in a grown forest:
+
+```
+godot --headless --fixed-fps 60 --script res://tests/jitter.gd -- 5 12 all
+```
+
+All art and sound are generated in code.
+
+## Physics
+
+Plants bend with their own joint solver in `sim/plant.gd`; fallen wood is
+simulated by [Godot Rapier 2D](https://github.com/appsinacup/godot-rapier-physics)
+v0.36.0 (MIT), which replaces Godot's built-in 2D physics. Piles of logs settle
+and sleep under Rapier instead of buzzing, which used to shake the stems they
+leant on. Its native libraries live in `addons/godot-rapier2d/bin/` and are
+stored with Git LFS.

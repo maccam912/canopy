@@ -13,6 +13,7 @@ const ZETA := 0.55           # sway damping ratio
 const CREEP := 0.5           # how fast strained wood takes a permanent set
 const COLLIDER_R := 1.2      # stems thinner than this let falling wood through
 const GROUND_K := 0.2
+const PUSH_GAIN := 0.08     # share of an outside force a stem takes up each step
 
 # --- light feeds ---
 const KAPPA := 0.8           # leaf opacity per optical width

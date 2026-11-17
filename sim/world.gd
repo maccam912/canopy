@@ -47,6 +47,12 @@ class Brace:
 var rng := RandomNumberGenerator.new()
 var braces: Array[Brace] = []
 var census_acc := 0.0
+# Switches for diagnosing the simulation in tests.
+var debug_no_grips := false
+var debug_no_log_push := false
+var debug_no_gusts := false
+var debug_no_grow := false
+var prof := {}
 var grip_acc := 0.0
 var shapes_standing := 0
 var tallest_ever := 0.0
@@ -61,6 +67,7 @@ var logs: Array[LogBody] = []
 var seeds: Array[SeedBit] = []
 var body_plant := {}
 var ground_rid := RID()
+var wall_rid := RID()
 var occupied := PackedInt32Array()
 var seed_cols := PackedInt32Array()
 
@@ -262,6 +269,7 @@ func _build_ground() -> void:
 		cs.position = Vector2(-40.0 if side == 0 else jar_w + 40.0, -jar_h * 0.5)
 		walls.add_child(cs)
 	add_child(walls)
+	wall_rid = walls.get_rid()
 
 
 func _physics_process(delta: float) -> void:
@@ -291,15 +299,27 @@ func step(dt: float) -> void:
 	light_real += dt
 	light_bio += bdt
 	if light_real >= 0.3 or light_bio >= 1.2:
+		var tc := Time.get_ticks_usec()
 		compute_light()
+		prof["light"] = prof.get("light", 0) + Time.get_ticks_usec() - tc
 	_gusts(dt)
-	_grow(dt, bdt)
+	var tg := Time.get_ticks_usec()
+	if not debug_no_grow:
+		_grow(dt, bdt)
+	prof["grow"] = prof.get("grow", 0) + Time.get_ticks_usec() - tg
+	var t0 := Time.get_ticks_usec()
 	_braces(dt)
+	var t1 := Time.get_ticks_usec()
 	_mech(dt)
+	var t2 := Time.get_ticks_usec()
+	prof["braces"] = prof.get("braces", 0) + t1 - t0
+	prof["mech"] = prof.get("mech", 0) + t2 - t1
 	grip_acc += dt
-	if grip_acc > 0.5:
+	if grip_acc > 0.5 and not debug_no_grips:
 		grip_acc = 0.0
+		var tq := Time.get_ticks_usec()
 		_grips()
+		prof["grips"] = prof.get("grips", 0) + Time.get_ticks_usec() - tq
 	census_acc += bdt
 	if census_acc > 4.0:
 		census_acc = 0.0
@@ -307,7 +327,9 @@ func step(dt: float) -> void:
 	var seed_steps := int(ceil(bdt / 0.034))
 	for k in seed_steps:
 		_seeds(bdt / seed_steps)
+	var tl := Time.get_ticks_usec()
 	_logs(dt, bdt)
+	prof["logs"] = prof.get("logs", 0) + Time.get_ticks_usec() - tl
 	soil_acc += bdt
 	if soil_acc > 1.0:
 		soil.step(soil_acc)
@@ -401,7 +423,24 @@ func _grow(dt: float, bdt: float) -> void:
 				p.still = 22
 
 
+## Spans of fallen wood that is moving (or resting on a plant) this step.
+var wood_spans := PackedFloat32Array()
+
+
+func wood_near(x: float, reach: float) -> bool:
+	for k in range(0, wood_spans.size(), 2):
+		if x + reach >= wood_spans[k] and x - reach <= wood_spans[k + 1]:
+			return true
+	return false
+
+
 func _mech(dt: float) -> void:
+	wood_spans.clear()
+	for l in logs:
+		if not l.sleeping or l.touching > 0.0:
+			var half := l.length * 0.5 + 30.0 + l.linear_velocity.length() * 0.25
+			wood_spans.append(l.position.x - half)
+			wood_spans.append(l.position.x + half)
 	var count := plants.size()
 	for idx in count:
 		var p := plants[idx]
@@ -431,7 +470,7 @@ func _gusts(dt: float) -> void:
 					p.still = 0
 	else:
 		gust_wait -= dt
-		if gust_wait <= 0.0:
+		if gust_wait <= 0.0 and not debug_no_gusts:
 			var right := rng.randf() < 0.5
 			gust_x = -250.0 if right else jar_w + 250.0
 			gust_v = (1.0 if right else -1.0) * rng.randf_range(260.0, 420.0)
@@ -757,9 +796,9 @@ func _braces(_dt: float) -> void:
 						else:
 							# A tie pulls the two points together; a prop pushes the trunk off its foot.
 							var dir := d / l * (-1.0 if b.tie else 1.0)
-							b.a.push(ha[0], b.a_at.x, b.a_at.y, dir.x * f, dir.y * f)
+							b.a.brace(ha[0], b.a_at.x, b.a_at.y, dir.x * f, dir.y * f)
 							if b.tie:
-								b.b.push(hb[0], b.b_at.x, b.b_at.y, -dir.x * f, -dir.y * f)
+								b.b.brace(hb[0], b.b_at.x, b.b_at.y, -dir.x * f, -dir.y * f)
 					else:
 						b.load = 0.0
 		if gone:

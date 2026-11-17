@@ -106,20 +106,23 @@ func _integrate_forces(state: PhysicsDirectBodyState2D) -> void:
 	for i in count:
 		var rid := state.get_contact_collider(i)
 		var pos := state.get_contact_collider_position(i)
-		if rid == world.ground_rid:
+		if rid == world.ground_rid or rid == world.wall_rid:
 			if not landed:
 				landed = true
 				world.on_log_landed(self, pos, peak_speed)
 			continue
 		var plant: Plant = world.body_plant.get(rid)
 		if plant != null and plant != joint_plant:
-			var imp := state.get_contact_impulse(i)
-			var shape := state.get_contact_collider_shape(i)
-			if shape < plant.col_seg.size():
-				# The plant feels the opposite of what the log felt.
-				var f := -imp / dt
-				plant.push(plant.col_seg[shape], pos.x, pos.y, f.x, f.y)
+			if not world.debug_no_log_push:
+				# The plant feels the opposite of what the log felt, on the stem it touches.
+				var f := -state.get_contact_impulse(i) / dt
+				plant.push(plant.seg_near(pos), pos.x, pos.y, f.x, f.y)
 			touching = 0.6
+		elif not landed:
+			var other := instance_from_id(state.get_contact_collider_id(i))
+			if other is LogBody and other.landed:
+				landed = true
+				world.on_log_landed(self, pos, peak_speed)
 
 
 func tick(dt: float) -> void:

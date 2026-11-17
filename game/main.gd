@@ -343,7 +343,11 @@ func _process(delta: float) -> void:
 	if film_prefix != "":
 		_film()
 	if smoke and frame >= 600:
-		print("CANOPY_SMOKE_PASS plants=%d t=%.0f" % [world.plants.size(), world.time])
+		# The shipped build must be running Rapier, not Godot's fallback physics.
+		if PhysicsServer2D.get_class() == "RapierPhysicsServer2D":
+			print("CANOPY_SMOKE_PASS plants=%d t=%.0f physics=%s" % [world.plants.size(), world.time, PhysicsServer2D.get_class()])
+		else:
+			print("ERROR: physics server is %s, not Rapier" % PhysicsServer2D.get_class())
 		get_tree().quit()
 	if shot_path != "" and frame >= shot_frames and not shot_done:
 		shot_done = true

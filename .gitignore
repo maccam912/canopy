@@ -8,3 +8,4 @@ __pycache__/
 *.jks
 export_credentials.cfg
 .DS_Store
+.lfs-assets-id

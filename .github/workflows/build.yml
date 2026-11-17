@@ -38,8 +38,16 @@ jobs:
     timeout-minutes: 45
     steps:
       - uses: actions/checkout@v4
+      # LFS objects (the physics libraries) are cached so each run doesn't
+      # spend LFS bandwidth downloading them again.
+      - name: List LFS objects
+        run: git lfs ls-files --long > .lfs-assets-id
+      - uses: actions/cache@v4
         with:
-          lfs: true
+          path: .git/lfs
+          key: lfs-${{ hashFiles('.lfs-assets-id') }}
+      - name: Fetch LFS objects
+        run: git lfs pull
       - uses: actions/setup-python@v5
         with:
           python-version: '3.13'

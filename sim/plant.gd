@@ -35,6 +35,9 @@ var strain := PackedFloat32Array()  # load / breaking load at each joint
 var efx := PackedFloat32Array()     # outside force on each segment (fallen wood, ties, props)
 var efy := PackedFloat32Array()
 var epx := PackedFloat32Array()
+var bfx := PackedFloat32Array()     # this step's force from props, ties and vines (applied at once)
+var bfy := PackedFloat32Array()
+var btq := PackedFloat32Array()     # its moment about the origin
 var epy := PackedFloat32Array()
 # solver scratch
 var sm := PackedFloat32Array()
@@ -98,6 +101,10 @@ var fork_side := 1.0
 var body := RID()
 var col_seg := PackedInt32Array()
 var col_shapes: Array[RID] = []
+var col_x := PackedFloat32Array()   # where each collider was last put
+var col_y := PackedFloat32Array()
+var col_a := PackedFloat32Array()
+var col_l := PackedFloat32Array()
 var col_dirty := true
 var removed := false
 var grips := 0
@@ -146,7 +153,7 @@ func load_state(d: Dictionary) -> void:
 	order = d.order
 	bias = d.bias
 	n = parent.size()
-	for arr: Variant in [dvel, ang, ax, ay, bx, by, lgain, kids, strain, efx, efy, epx, epy, sm, sfx, sfy, st0, smx, smy, dist, depth]:
+	for arr: Variant in [dvel, ang, ax, ay, bx, by, lgain, kids, strain, efx, efy, epx, epy, bfx, bfy, btq, sm, sfx, sfy, st0, smx, smy, dist, depth]:
 		arr.resize(n)
 		arr.fill(0)
 	for i in n:
@@ -218,6 +225,9 @@ func _add_seg(par: int, rel: float, ord: int, p_bias: float) -> int:
 	efy.append(0.0)
 	epx.append(0.0)
 	epy.append(0.0)
+	bfx.append(0.0)
+	bfy.append(0.0)
+	btq.append(0.0)
 	sm.append(0.0)
 	sfx.append(0.0)
 	sfy.append(0.0)
@@ -557,11 +567,14 @@ func _compact(keep: PackedByteArray) -> void:
 				efy[m] = efy[i]
 				epx[m] = epx[i]
 				epy[m] = epy[i]
+				bfx[m] = bfx[i]
+				bfy[m] = bfy[i]
+				btq[m] = btq[i]
 			m += 1
 		else:
 			remap[i] = -1
 	n = m
-	for arr: Variant in [parent, slen, rad, rest, defl, dvel, ang, ax, ay, bx, by, leaf, lgain, tip, kids, order, bias, strain, efx, efy, epx, epy, sm, sfx, sfy, st0, smx, smy, dist, depth]:
+	for arr: Variant in [parent, slen, rad, rest, defl, dvel, ang, ax, ay, bx, by, leaf, lgain, tip, kids, order, bias, strain, efx, efy, epx, epy, bfx, bfy, btq, sm, sfx, sfy, st0, smx, smy, dist, depth]:
 		arr.resize(n)
 	for i in n:
 		kids[i] = 0
@@ -572,8 +585,6 @@ func _compact(keep: PackedByteArray) -> void:
 			kids[parent[i]] += 1
 	col_dirty = true
 	dirty = true
-	if body.is_valid():
-		_rebuild_body()
 
 
 ## Indices of segment i and everything that grows from it.
@@ -673,11 +684,14 @@ func mech(dt: float, wind: float) -> int:
 		var cx := (ax[i] + bx[i]) * 0.5
 		var cy := (ay[i] + by[i]) * 0.5
 		var wfx := wind * (leaf[i] * leaf_op * 3.0 + r * slen[i] * 0.15)
-		var fx := efx[i] + wfx
-		var fy := efy[i] + (mw + ml) * g
-		var t0 := cx * mw * g + bx[i] * ml * g + (epx[i] * efy[i] - epy[i] * efx[i]) - by[i] * wfx
-		efx[i] *= 0.7
-		efy[i] *= 0.7
+		var fx := efx[i] + bfx[i] + wfx
+		var fy := efy[i] + bfy[i] + (mw + ml) * g
+		var t0 := cx * mw * g + bx[i] * ml * g + (epx[i] * efy[i] - epy[i] * efx[i]) + btq[i] - by[i] * wfx
+		efx[i] *= 1.0 - T.PUSH_GAIN
+		efy[i] *= 1.0 - T.PUSH_GAIN
+		bfx[i] = 0.0
+		bfy[i] = 0.0
+		btq[i] = 0.0
 		sm[i] += mw + ml
 		smx[i] += cx * mw + bx[i] * ml
 		smy[i] += cy * mw + by[i] * ml
@@ -804,28 +818,75 @@ func _update_anchor() -> void:
 	anchor_k = (0.35 + 3.0 * root / (volume + 40.0)) * grip
 
 
+## The segment with a collider nearest a point.
+func seg_near(at: Vector2) -> int:
+	var best := 0
+	var best_d := 1e18
+	for i in col_seg:
+		if i >= n:
+			continue
+		var pt := Geometry2D.get_closest_point_to_segment(at, Vector2(ax[i], ay[i]), Vector2(bx[i], by[i]))
+		var d := pt.distance_squared_to(at)
+		if d < best_d:
+			best_d = d
+			best = i
+	return best
+
+
 func push(i: int, px: float, py: float, fx: float, fy: float) -> void:
 	if i >= n:
 		return
-	efx[i] += fx * 0.3
-	efy[i] += fy * 0.3
+	# Outside forces are smoothed over about a fifth of a second, so a log
+	# resting on a stem settles instead of feeding back into a buzz.
+	efx[i] += fx * T.PUSH_GAIN
+	efy[i] += fy * T.PUSH_GAIN
 	epx[i] = px
 	epy[i] = py
 	awake = true
 	still = 0
 
 
+## A force from a prop, tie or vine: springs must act at once, because a
+## delayed spring pumps energy into a sway instead of taking it out.
+func brace(i: int, px: float, py: float, fx: float, fy: float) -> void:
+	if i >= n:
+		return
+	bfx[i] += fx
+	bfy[i] += fy
+	btq[i] += px * fy - py * fx
+	awake = true
+	still = 0
+
+
 # ------------------------------------------------------------- colliders ----
 
+## Move the stem colliders to match the plant. Plants only ever collide with
+## fallen wood, and moving a collider is not free, so this happens only while
+## moving wood is near, and only for segments that have moved enough to matter.
 func sync_body() -> void:
 	if not body.is_valid():
+		return
+	if not world.wood_near(base_x, height + 40.0):
 		return
 	if col_dirty:
 		_rebuild_body()
 		return
 	for c in col_seg.size():
 		var i := col_seg[c]
-		PhysicsServer2D.body_set_shape_transform(body, c, Transform2D(ang[i], Vector2((ax[i] + bx[i]) * 0.5, (ay[i] + by[i]) * 0.5)))
+		if i >= n:
+			col_dirty = true
+			return
+		var cx := (ax[i] + bx[i]) * 0.5
+		var cy := (ay[i] + by[i]) * 0.5
+		var l := slen[i]
+		if absf(l - col_l[c]) > col_l[c] * 0.15 + 1.0:
+			col_dirty = true
+		var moved := absf(cx - col_x[c]) + absf(cy - col_y[c]) + absf(wrapf(ang[i] - col_a[c], -PI, PI)) * l * 0.5
+		if moved > 0.35:
+			col_x[c] = cx
+			col_y[c] = cy
+			col_a[c] = ang[i]
+			PhysicsServer2D.body_set_shape_transform(body, c, Transform2D(ang[i], Vector2(cx, cy)))
 
 
 func _rebuild_body() -> void:
@@ -835,13 +896,23 @@ func _rebuild_body() -> void:
 		PhysicsServer2D.free_rid(s)
 	col_shapes.clear()
 	col_seg.clear()
+	col_x.clear()
+	col_y.clear()
+	col_a.clear()
+	col_l.clear()
 	for i in n:
 		if rad[i] >= T.COLLIDER_R and slen[i] > 4.0:
 			var shape := PhysicsServer2D.rectangle_shape_create()
 			PhysicsServer2D.shape_set_data(shape, Vector2(rad[i], slen[i] * 0.5))
-			PhysicsServer2D.body_add_shape(body, shape, Transform2D(ang[i], Vector2((ax[i] + bx[i]) * 0.5, (ay[i] + by[i]) * 0.5)))
+			var cx := (ax[i] + bx[i]) * 0.5
+			var cy := (ay[i] + by[i]) * 0.5
+			PhysicsServer2D.body_add_shape(body, shape, Transform2D(ang[i], Vector2(cx, cy)))
 			col_shapes.append(shape)
 			col_seg.append(i)
+			col_x.append(cx)
+			col_y.append(cy)
+			col_a.append(ang[i])
+			col_l.append(slen[i])
 
 
 func free_body() -> void:

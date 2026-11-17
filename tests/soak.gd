@@ -10,6 +10,8 @@ var t0 := 0
 var cascades := []
 var verbose := false
 var grips := 0
+var last_frames := 0
+var last_ms := 0
 
 
 func _start() -> void:
@@ -58,6 +60,14 @@ func _process(_delta: float) -> bool:
 	frames += 1
 	if world.time >= next_report:
 		next_report += 60.0
+		var phys_us := Performance.get_monitor(Performance.TIME_PHYSICS_PROCESS) * 1e6
+		var line := "     prof per frame (us):"
+		for k: String in world.prof:
+			line += " %s %.0f" % [k, float(world.prof[k]) / maxf(frames - last_frames, 1)]
+		print(line, "  | physics_process %.0f us  frame %.1f ms" % [phys_us, float(Time.get_ticks_msec() - last_ms) / maxf(frames - last_frames, 1)])
+		world.prof.clear()
+		last_frames = frames
+		last_ms = Time.get_ticks_msec()
 		var alive := 0
 		var tall := 0.0
 		var mean := 0.0

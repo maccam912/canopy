@@ -96,6 +96,8 @@ func _process(_delta: float) -> bool:
 				check(target.removed or target.height < cut_height * 0.5, "the snipped plant is shorter")
 			if frames >= 420:
 				var l := world.logs[world.logs.size() - 1] if not world.logs.is_empty() else null
+				if l != null and not l.landed:
+					print("   log pos ", l.position, " rot ", l.rotation, " vel ", l.linear_velocity, " sleeping ", l.sleeping, " hinged ", l.joint.is_valid(), " touching ", l.touching, " colliding ", l.get_colliding_bodies().size(), " ground ", world.soil.ground_y(l.position.x), " len ", l.length)
 				check(l != null and l.landed, "the cut wood reached the ground")
 				# Weight breaks: lean hard on the stoutest plant until something gives.
 				target = null

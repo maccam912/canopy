@@ -54,6 +54,8 @@ def export(platform):
         with zipfile.ZipFile(output) as archive:
             if not any(entry.startswith("lib/arm64-v8a/") for entry in archive.namelist()):
                 raise RuntimeError("APK is missing the ARM64 engine")
+            if not any(entry.startswith("lib/arm64-v8a/") and "godot_rapier" in entry for entry in archive.namelist()):
+                raise RuntimeError("APK is missing the Rapier physics library")
     if platform == "macos":
         verification = ROOT / "build/macos-verify"
         if verification.exists():
