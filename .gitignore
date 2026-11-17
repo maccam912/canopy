@@ -1,0 +1,10 @@
+.godot/
+.tools/
+/build/
+/android/
+__pycache__/
+*.pyc
+*.keystore
+*.jks
+export_credentials.cfg
+.DS_Store

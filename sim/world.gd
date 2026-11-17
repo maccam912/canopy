@@ -1,0 +1,632 @@
+class_name World
+extends Node2D
+## The jar: soil, sun, plants, seeds and fallen wood, advanced by step().
+## Nothing here draws or reads input, so a whole forest can be grown headless.
+
+signal plant_added(p: Plant)
+signal plant_removed(p: Plant)
+signal log_added(l: LogBody)
+signal log_removed(l: LogBody)
+signal happened(kind: String, data: Dictionary)
+
+
+class SeedBit:
+	var x := 0.0
+	var y := 0.0
+	var vx := 0.0
+	var vy := 0.0
+	var genome: Genome
+	var mass := 0.5
+	var reserve := 50.0
+	var resting := false
+	var t := 0.0
+	var delay := 3.0
+	var life := 100.0
+	var phase := 0.0
+	var species := -1
+	var generation := 0
+	var check := 0.0
+
+
+var rng := RandomNumberGenerator.new()
+var jar_w := 1500.0
+var jar_h := 780.0
+var lid_y := -780.0
+var soil := Soil.new()
+var light := LightField.new()
+var shapes := Shapes.new()
+var plants: Array[Plant] = []
+var logs: Array[LogBody] = []
+var seeds: Array[SeedBit] = []
+var body_plant := {}
+var ground_rid := RID()
+var occupied := PackedInt32Array()
+var seed_cols := PackedInt32Array()
+
+var time := 0.0            # biological seconds: growth, rot, the sun
+var clock := 0.0           # mechanical seconds: sway and falls, always real time
+var speed := 1.0
+var falling := false
+var sun_phi := 0.0
+var sun_vel := 0.0
+var wind := 0.0            # steady wind from the Wind tool
+var gust_x := -1e6
+var gust_v := 0.0
+var gust_power := 0.0
+var gust_wait := 4.0
+var breeze := 1.0
+
+var next_id := 1
+var light_real := 1.0
+var light_bio := 1.0
+var light_version := 0
+var soil_acc := 0.0
+var cascade := {}
+var cascade_clock := -100.0
+var cascade_peak := 0
+var purge := false
+
+var count_falls := 0
+var count_born := 0
+var count_died := 0
+var count_rotted := 0
+var best_cascade := 0
+
+
+func setup(p_seed: int, w := 1500.0, h := 780.0) -> void:
+	rng.seed = p_seed
+	jar_w = w
+	jar_h = h
+	lid_y = -h
+	soil.setup(w, rng)
+	occupied.resize(soil.n)
+	seed_cols.resize(soil.n)
+	_build_ground()
+	compute_light()
+
+
+func _build_ground() -> void:
+	var ground := StaticBody2D.new()
+	ground.collision_layer = 1
+	ground.collision_mask = 0
+	var mat := PhysicsMaterial.new()
+	mat.friction = 1.0
+	ground.physics_material_override = mat
+	# One convex slab per soil column keeps contact with long logs stable.
+	for i in soil.n:
+		var x0 := i * Soil.CW
+		var x1 := x0 + Soil.CW
+		var cs := CollisionShape2D.new()
+		var poly := ConvexPolygonShape2D.new()
+		poly.points = PackedVector2Array([Vector2(x0, soil.height[i]), Vector2(x1, soil.height[i + 1]), Vector2(x1, 160.0), Vector2(x0, 160.0)])
+		cs.shape = poly
+		ground.add_child(cs)
+	add_child(ground)
+	ground_rid = ground.get_rid()
+	var walls := StaticBody2D.new()
+	walls.collision_layer = 1
+	walls.collision_mask = 0
+	for side in 2:
+		var cs := CollisionShape2D.new()
+		var rect := RectangleShape2D.new()
+		rect.size = Vector2(80.0, jar_h + 400.0)
+		cs.shape = rect
+		cs.position = Vector2(-40.0 if side == 0 else jar_w + 40.0, -jar_h * 0.5)
+		walls.add_child(cs)
+	add_child(walls)
+
+
+func _physics_process(delta: float) -> void:
+	step(delta)
+
+
+func _exit_tree() -> void:
+	for l in logs:
+		l.release()
+	for p in plants:
+		p.free_body()
+
+
+func step(dt: float) -> void:
+	dt = minf(dt, 1.0 / 30.0)
+	# A big fall always plays at normal speed.
+	var sp := 1.0 if falling else speed
+	var bdt := dt * sp
+	time += bdt
+	clock += dt
+	if sun_vel != 0.0:
+		sun_phi += sun_vel * bdt
+		if absf(sun_phi) > 1.25:
+			sun_phi = clampf(sun_phi, -1.25, 1.25)
+			sun_vel = -sun_vel
+	light_real += dt
+	light_bio += bdt
+	if light_real >= 0.3 or light_bio >= 1.2:
+		compute_light()
+	_gusts(dt)
+	_grow(dt, bdt)
+	_mech(dt)
+	var seed_steps := int(ceil(bdt / 0.034))
+	for k in seed_steps:
+		_seeds(bdt / seed_steps)
+	_logs(dt, bdt)
+	soil_acc += bdt
+	if soil_acc > 1.0:
+		soil.step(soil_acc)
+		soil_acc = 0.0
+	if not cascade.is_empty() and clock - cascade_clock > 6.0:
+		happened.emit("cascade_end", {"count": cascade.size()})
+		cascade.clear()
+	if purge:
+		purge = false
+		plants = plants.filter(func(p: Plant) -> bool: return not p.removed)
+
+
+# ------------------------------------------------------------------ light ----
+
+func compute_light() -> void:
+	light_real = 0.0
+	light_bio = 0.0
+	light.begin(sun_phi, jar_w, jar_h)
+	for p in plants:
+		var op := p.leaf_op
+		for i in p.n:
+			if p.leaf[i] > 0.0:
+				light.deposit(p.bx[i], p.by[i], p.leaf[i], op)
+	light.solve()
+	for p in plants:
+		var op := p.leaf_op
+		var total := 0.0
+		for i in p.n:
+			if p.leaf[i] > 0.0:
+				var e := light.income(p.bx[i], p.by[i], p.leaf[i], op)
+				p.lgain[i] = e
+				total += e
+			else:
+				p.lgain[i] = 0.0
+		p.income = total if p.alive else 0.0
+	for c in soil.n:
+		var x := (c + 0.5) * Soil.CW
+		soil.light[c] = light.sample(x, soil.ground_y(x) - 4.0)
+	light_version += 1
+
+
+# ----------------------------------------------------------------- plants ----
+
+func add_plant(g: Genome, x: float, reserve: float, species := -1, generation := 0) -> Plant:
+	var p := Plant.new(self, g, x, reserve)
+	p.id = next_id
+	next_id += 1
+	p.species = shapes.classify(g, species) if not shapes.list.is_empty() else -1
+	p.generation = generation
+	p.body = PhysicsServer2D.body_create()
+	PhysicsServer2D.body_set_mode(p.body, PhysicsServer2D.BODY_MODE_STATIC)
+	PhysicsServer2D.body_set_space(p.body, get_world_2d().space)
+	PhysicsServer2D.body_set_collision_layer(p.body, 2)
+	PhysicsServer2D.body_set_collision_mask(p.body, 0)
+	body_plant[p.body] = p
+	p.grow_acc = rng.randf() * 0.3
+	plants.append(p)
+	occupied[soil.col(x)] += 1
+	if p.species >= 0:
+		shapes.list[p.species].alive += 1
+		shapes.list[p.species].total += 1
+	count_born += 1
+	plant_added.emit(p)
+	return p
+
+
+func remove_plant(p: Plant) -> void:
+	if p.removed:
+		return
+	p.removed = true
+	purge = true
+	if p.alive and p.species >= 0:
+		shapes.list[p.species].alive -= 1
+	p.alive = false
+	body_plant.erase(p.body)
+	p.free_body()
+	occupied[soil.col(p.base_x)] -= 1
+	plant_removed.emit(p)
+
+
+func _grow(dt: float, bdt: float) -> void:
+	var interval := maxf(0.3, 0.12 * (bdt / dt))
+	for p in plants:
+		p.grow_acc += bdt
+		if p.grow_acc >= interval and not p.removed:
+			var step_dt := p.grow_acc
+			p.grow_acc = 0.0
+			p.grow(step_dt)
+			if not p.removed and not p.awake:
+				p.awake = true
+				p.still = 22
+
+
+func _mech(dt: float) -> void:
+	var count := plants.size()
+	for idx in count:
+		var p := plants[idx]
+		if p.removed or not p.awake:
+			continue
+		var failed := p.mech(dt, wind_at(p.base_x))
+		p.sync_body()
+		if p.strain[0] > p.anchor_ratio():
+			break_plant(p, 0, true)
+		elif failed >= 0:
+			break_plant(p, failed, false)
+
+
+func wind_at(x: float) -> float:
+	var d := (x - gust_x) / 140.0
+	return wind + gust_power * exp(-d * d)
+
+
+func _gusts(dt: float) -> void:
+	if gust_power != 0.0:
+		gust_x += gust_v * dt
+		if gust_x < -300.0 or gust_x > jar_w + 300.0:
+			gust_power = 0.0
+			gust_wait = rng.randf_range(5.0, 14.0)
+		else:
+			for p in plants:
+				if not p.awake and absf(p.base_x - gust_x) < 220.0:
+					p.awake = true
+					p.still = 0
+	else:
+		gust_wait -= dt
+		if gust_wait <= 0.0:
+			var right := rng.randf() < 0.5
+			gust_x = -250.0 if right else jar_w + 250.0
+			gust_v = (1.0 if right else -1.0) * rng.randf_range(260.0, 420.0)
+			gust_power = (1.0 if right else -1.0) * rng.randf_range(10.0, 30.0) * breeze
+	if wind != 0.0:
+		for p in plants:
+			if not p.awake:
+				p.awake = true
+				p.still = 0
+
+
+## A joint gave way. Everything beyond it becomes fallen wood.
+## cut: for a snip, how far along segment i the cut lands (0..1); else -1.
+func break_plant(p: Plant, i: int, uproot: bool, cut := -1.0, kick := 0.0) -> LogBody:
+	if p.removed or i >= p.n:
+		return null
+	var whole := i == 0 and cut < 0.08
+	var idxs := p.subtree(i)
+	var data := PackedFloat32Array()
+	data.resize(idxs.size() * LogBody.STRIDE)
+	var m := 0.0
+	var cx := 0.0
+	var cy := 0.0
+	var vol := 0.0
+	var leaves := 0.0
+	var o := 0
+	for j in idxs:
+		var x0 := p.ax[j]
+		var y0 := p.ay[j]
+		if j == i and cut > 0.0:
+			x0 = lerpf(p.ax[j], p.bx[j], cut)
+			y0 = lerpf(p.ay[j], p.by[j], cut)
+		var r := p.rad[j]
+		var l := Vector2(x0, y0).distance_to(Vector2(p.bx[j], p.by[j]))
+		var lw := p.leaf[j] * p.leaf_op
+		data[o] = x0
+		data[o + 1] = y0
+		data[o + 2] = p.bx[j]
+		data[o + 3] = p.by[j]
+		data[o + 4] = r
+		data[o + 5] = lw
+		o += LogBody.STRIDE
+		var mw := T.RHO * r * r * l
+		m += mw + T.LEAF_M * lw
+		cx += (x0 + p.bx[j]) * 0.5 * mw + p.bx[j] * T.LEAF_M * lw
+		cy += (y0 + p.by[j]) * 0.5 * mw + p.by[j] * T.LEAF_M * lw
+		vol += r * r * l
+		leaves += lw
+	var com := Vector2(cx / m, cy / m)
+	var joint_at := Vector2(data[0], data[1])
+	# The piece keeps the swing it had when it let go.
+	var spin := 0.0
+	var k := i
+	while k >= 0:
+		spin += p.dvel[k]
+		k = p.parent[k]
+	var arm := com - Vector2(p.base_x, p.base_y)
+	var vel := Vector2(-arm.y, arm.x) * spin
+	var share := clampf(vol / maxf(p.volume, 1.0), 0.0, 1.0)
+	var part_nutrient := p.nutrient * share
+	p.nutrient -= part_nutrient
+	var ripe := p.seeds_ripe + int(p.seed_bank / p.seed_cost) + (1 if p.mature else 0)
+	var carried := ripe if whole else int(round(ripe * share))
+	var was_alive := p.alive
+	var height := p.height
+	var info := {"plant": p.id, "x": joint_at.x, "y": joint_at.y, "volume": vol, "uproot": uproot, "snip": cut >= 0.0, "whole": whole, "height": height, "alive": was_alive, "species": p.species}
+
+	var body: LogBody = null
+	if vol < 25.0:
+		# Too small to be an object: it crumbles straight into litter.
+		soil.add(com.x - 10.0, com.x + 10.0, part_nutrient + leaves * T.LEAF_N)
+		happened.emit("litter", {"x": com.x, "y": com.y, "hue": p.genome.hue, "leaves": leaves})
+	else:
+		body = LogBody.new()
+		body.genome = p.genome
+		body.species = p.species
+		body.nutrient = part_nutrient + leaves * T.LEAF_N
+		body.seeds = carried
+		if cut >= 0.0:
+			# A cut stem tips the way it was pushed, or the way it already leans.
+			var lean := signf(com.x - joint_at.x) if absf(com.x - joint_at.x) > 2.0 else (1.0 if rng.randf() < 0.5 else -1.0)
+			spin += (kick if kick != 0.0 else lean) * 0.4
+			var arm2 := com - joint_at
+			vel = Vector2(-arm2.y, arm2.x) * spin
+		body.setup(self, data, com, vel, spin)
+		add_child(body)
+		logs.append(body)
+		if not whole and p.body.is_valid():
+			# The break holds for a moment like a hinge, so the top swings down in an arc.
+			body.hinge(p, joint_at)
+		log_added.emit(body)
+
+	if whole:
+		soil.add(p.base_x - 12.0, p.base_x + 12.0, p.nutrient)
+		p.nutrient = 0.0
+		if was_alive:
+			p.die("uprooted" if uproot else "snapped")
+		remove_plant(p)
+	else:
+		p.seeds_ripe = maxi(0, p.seeds_ripe - carried)
+		if cut > 0.0:
+			# Keep the stub of the cut segment.
+			var kids := PackedInt32Array()
+			for j in range(i + 1, p.n):
+				if p.parent[j] == i:
+					kids.append(j)
+			p.slen[i] *= cut
+			p.leaf[i] = 0.0
+			p.tip[i] = 0
+			for c in range(kids.size() - 1, -1, -1):
+				p.remove_subtree(kids[c])
+			p.pose()
+			p.awake = true
+			p.still = 0
+		else:
+			p.remove_subtree(i)
+		p.col_dirty = true
+		if was_alive:
+			p.falls_survived += 1
+	if vol >= 250.0:
+		count_falls += 1
+		if clock - cascade_clock > 6.0:
+			cascade.clear()
+		cascade[p.id] = true
+		cascade_clock = clock
+		best_cascade = maxi(best_cascade, cascade.size())
+		info["count"] = cascade.size()
+		happened.emit("fall", info)
+	else:
+		happened.emit("break", info)
+	return body
+
+
+## A stem cut by the player. Returns the fallen piece, if any.
+func snip(p: Plant, i: int, t: float, kick := 0.0) -> LogBody:
+	if p.removed or i >= p.n:
+		return null
+	return break_plant(p, i, false, clampf(t, 0.0, 0.95), kick)
+
+
+## A small dead plant falls apart where it stands.
+func crumble(p: Plant) -> void:
+	soil.add(p.base_x - 10.0, p.base_x + 10.0, p.nutrient + p.leaf_total * p.leaf_op * T.LEAF_N)
+	happened.emit("litter", {"x": p.base_x, "y": p.base_y - p.height * 0.5, "hue": p.genome.hue, "leaves": p.leaf_total})
+	remove_plant(p)
+
+
+# ------------------------------------------------------------------ seeds ----
+
+func spawn_seed(g: Genome, x: float, y: float, vx: float, vy: float, from: Plant) -> SeedBit:
+	if seeds.size() >= T.MAX_SEEDS:
+		return null
+	var s := SeedBit.new()
+	s.genome = g
+	s.x = clampf(x, 6.0, jar_w - 6.0)
+	s.y = y
+	s.vx = vx
+	s.vy = vy
+	var hs := g.h[Genome.SEED]
+	s.mass = lerpf(0.12, 1.0, hs)
+	s.reserve = (70.0 + 650.0 * hs * hs) * 0.7
+	s.delay = rng.randf_range(1.5, 7.0)
+	s.life = 50.0 + 220.0 * s.mass
+	s.phase = rng.randf() * TAU
+	if from != null:
+		s.species = from.species
+		s.generation = from.generation + 1
+	seeds.append(s)
+	return s
+
+
+func _seeds(bdt: float) -> void:
+	var dt := bdt
+	var i := seeds.size() - 1
+	while i >= 0:
+		var s := seeds[i]
+		var dead := false
+		if not s.resting:
+			# Light seeds drift on the air; heavy ones drop.
+			var vt := 20.0 + 170.0 * s.mass * s.mass
+			s.vy += T.GRAV * (1.0 - s.vy / vt) * dt
+			var drift := wind_at(s.x) * 2.2 + sin(time * 2.3 + s.phase) * 26.0 * (1.0 - s.mass)
+			s.vx += (drift * (1.0 - s.mass * 0.8) - s.vx) * minf(1.0, dt * (0.6 + 2.5 * (1.0 - s.mass)))
+			s.x += s.vx * dt
+			s.y += s.vy * dt
+			if s.x < 5.0 or s.x > jar_w - 5.0:
+				s.x = clampf(s.x, 5.0, jar_w - 5.0)
+				s.vx = -s.vx * 0.3
+			var gy := soil.ground_y(s.x)
+			if s.y >= gy:
+				s.y = gy
+				var c := soil.col(s.x)
+				if seed_cols[c] >= 3:
+					dead = true
+				else:
+					s.resting = true
+					seed_cols[c] += 1
+		else:
+			s.t += bdt
+			s.check += bdt
+			if s.t > s.life:
+				dead = true
+				seed_cols[soil.col(s.x)] -= 1
+			elif s.t > s.delay and s.check > 1.0:
+				s.check = 0.0
+				var c := soil.col(s.x)
+				var need := lerpf(0.3, 0.05, s.genome.h[Genome.THRIFT])
+				if occupied[c] == 0 and plants.size() < T.MAX_PLANTS and soil.light[c] >= need:
+					add_plant(s.genome, s.x, s.reserve, s.species, s.generation)
+					seed_cols[c] -= 1
+					happened.emit("sprout", {"x": s.x, "y": s.y})
+					dead = true
+		if dead:
+			seeds[i] = seeds[seeds.size() - 1]
+			seeds.pop_back()
+		i -= 1
+
+
+## Take a resting or flying seed out of the world (the seed jar).
+func take_seed(s: SeedBit) -> void:
+	var at := seeds.find(s)
+	if at < 0:
+		return
+	if s.resting:
+		seed_cols[soil.col(s.x)] -= 1
+	seeds.remove_at(at)
+
+
+# ------------------------------------------------------------ fallen wood ----
+
+func _logs(dt: float, bdt: float) -> void:
+	var any := false
+	var crowded := logs.size() > T.MAX_LOGS
+	var i := logs.size() - 1
+	while i >= 0:
+		var l := logs[i]
+		l.tick(dt)
+		if l.big and l.moving():
+			any = true
+		var rate := bdt / l.rot_time * (1.0 + l.beetles) * (5.0 if crowded and i < logs.size() - T.MAX_LOGS else 1.0)
+		if not l.landed and l.age < 20.0:
+			rate = 0.0
+		l.rot += rate
+		if rate > 0.0:
+			var give := minf(l.nutrient, l.nutrient * rate / maxf(1.0 - l.rot + rate, 0.01))
+			var sp := l.span()
+			soil.add(sp.x, sp.y, give)
+			l.nutrient -= give
+		if l.rot >= 1.0 or l.position.y > 300.0:
+			var sp := l.span()
+			soil.add(sp.x, sp.y, l.nutrient)
+			l.release()
+			logs.remove_at(i)
+			log_removed.emit(l)
+			count_rotted += 1
+			happened.emit("rotted", {"x": l.position.x, "y": l.position.y, "volume": l.volume})
+			l.queue_free()
+		i -= 1
+	falling = any
+
+
+func on_log_landed(l: LogBody, pos: Vector2, hit_speed: float) -> void:
+	happened.emit("impact", {"x": pos.x, "y": pos.y, "speed": hit_speed, "length": l.length, "volume": l.volume, "hue": l.genome.hue if l.genome != null else 0.3})
+	if l.seeds > 0 and not l.flung and l.genome != null:
+		l.flung = true
+		# Seeds are flung from the crown: a taller, faster fall throws them farther.
+		var dir := signf(l.linear_velocity.x)
+		if dir == 0.0:
+			dir = 1.0 if rng.randf() < 0.5 else -1.0
+		var xf := l.global_transform
+		var count := l.segs.size() / LogBody.STRIDE
+		for k in l.seeds:
+			var o := (rng.randi() % count) * LogBody.STRIDE
+			var at := xf * Vector2(l.segs[o + 2], l.segs[o + 3])
+			var s := spawn_seed(l.genome.child(rng), at.x, minf(at.y, soil.ground_y(at.x) - 3.0), dir * hit_speed * rng.randf_range(0.3, 1.5), -hit_speed * rng.randf_range(0.2, 0.8) - 20.0, null)
+			if s != null:
+				s.species = l.species
+		l.seeds = 0
+		happened.emit("flung", {"x": pos.x, "y": pos.y})
+
+
+# ----------------------------------------------------------------- events ----
+
+func on_mature(p: Plant) -> void:
+	var near := shapes.nearest(p.genome)
+	var previous := p.species
+	if near[0] >= 0 and near[1] < Shapes.RADIUS:
+		p.species = near[0]
+	else:
+		var s := shapes.found(p.genome, time, previous, rng)
+		p.species = s.id
+		happened.emit("new_shape", {"shape": s, "plant": p})
+	if p.species != previous:
+		if previous >= 0:
+			shapes.list[previous].alive -= 1
+		shapes.list[p.species].alive += 1
+		shapes.list[p.species].total += 1
+		p.dirty = true
+	var s := shapes.list[p.species]
+	if p.height > s.tallest:
+		s.tallest = p.height
+
+
+func on_seeded(p: Plant) -> void:
+	happened.emit("seeded", {"plant": p})
+
+
+func on_death(p: Plant) -> void:
+	count_died += 1
+	if p.species >= 0:
+		shapes.list[p.species].alive -= 1
+	happened.emit("death", {"plant": p, "cause": p.cause})
+
+
+func on_leaf_drop(p: Plant, i: int) -> void:
+	happened.emit("leaf", {"x": p.bx[i], "y": p.by[i], "hue": p.genome.hue, "dead": not p.alive})
+
+
+func on_lid(p: Plant) -> void:
+	happened.emit("lid", {"plant": p})
+
+
+## Scatter a first handful of very different seeds.
+func sow_starters() -> void:
+	var kinds := [
+		[0.10, 0.05, 0.25, 0.40, 0.30, 0.30, 0.60, 0.20],   # pole
+		[0.20, 0.90, 0.70, 0.90, 0.50, 0.60, 0.70, 0.30],   # umbrella
+		[0.30, 0.50, 0.60, 0.70, 0.50, 0.70, 0.40, 0.95],   # lurker
+		[0.40, 0.40, 0.20, 0.30, 0.10, 0.05, 0.02, 0.10],   # weed
+		[0.95, 0.30, 0.20, 0.50, 0.40, 0.30, 0.40, 0.20],   # chaser
+		[0.10, 0.50, 0.95, 0.60, 0.95, 0.80, 0.80, 0.40],   # anchor
+		[0.50, 0.20, 0.05, 0.80, 0.05, 0.10, 0.30, 0.10],   # toppler
+		[0.30, 0.80, 0.40, 0.10, 0.40, 0.20, 0.50, 0.40],   # feather
+	]
+	var order := range(kinds.size())
+	var slots := kinds.size() + 3
+	var hue0 := rng.randf()
+	for k in slots:
+		var g: Genome
+		if k < kinds.size():
+			g = Genome.make(kinds[order[k]], fposmod(hue0 + k * 0.618, 1.0))
+			g = g.child(rng, 0.03)
+		else:
+			g = Genome.random(rng)
+		var x := jar_w * (0.06 + 0.88 * fposmod(k * 0.618 + 0.3, 1.0))
+		add_plant(g, x, 60.0 + 200.0 * g.h[Genome.SEED])
+
+
+func living() -> int:
+	var c := 0
+	for p in plants:
+		if p.alive and not p.removed:
+			c += 1
+	return c
