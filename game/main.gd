@@ -23,6 +23,14 @@ const TOOL_NOTES := {
 	"wind": ["Wind", "Five came down together. Drag sideways to blow across the jar."],
 }
 
+## Each home is wider and a little taller than the last. The hillside has no lid.
+const HOMES := [
+	{"kind": "jar", "name": "Jar", "w": 1500.0, "h": 620.0},
+	{"kind": "tank", "name": "Tank", "w": 2100.0, "h": 700.0},
+	{"kind": "greenhouse", "name": "Greenhouse", "w": 2800.0, "h": 780.0},
+	{"kind": "hillside", "name": "Hillside", "w": 3600.0, "h": 900.0},
+]
+
 var world: World
 var back: JarBack
 var front: JarFront
@@ -86,6 +94,14 @@ var journal := {"falls": 0, "biggest": 0, "shapes": [], "lid": false}
 const SAVE_PATH := "user://canopy.save"
 const AWAY_CAP := 20.0 * 60.0
 var guide_frame := -1
+var homes: Array = []        # {kind, state (saved world, empty for the live one), left (unix time)}
+var home := 0
+var moving_home := false
+var pending_home: Array = [] # a new home waiting for a catch-up to finish: [parents]
+var fade: ColorRect
+var override_h := 0.0
+var homes_smoke := false
+var homes_smoke_step := 0
 
 
 func _ready() -> void:
@@ -94,6 +110,7 @@ func _ready() -> void:
 	var start_speed := 1.0
 	var start_phi := 0.0
 	var open_guide := false
+	var start_kind := "jar"
 	var k := 0
 	while k < args.size():
 		match args[k]:
@@ -123,6 +140,19 @@ func _ready() -> void:
 				k += 1
 			"--guide":
 				open_guide = true
+			"--home":
+				start_kind = args[k + 1]
+				k += 1
+			"--homes-smoke":
+				# Testing: crack a short jar, open the tank, then go back to the jar.
+				homes_smoke = true
+				override_h = 230.0
+				world_seed = 4
+				start_speed = FAST
+			"--jar-h":
+				# Testing: a shorter first home, so the lid is reached quickly.
+				override_h = float(args[k + 1])
+				k += 1
 			"--fresh":
 				fresh = true
 			"--use-save":
@@ -143,45 +173,33 @@ func _ready() -> void:
 				Engine.max_physics_steps_per_frame = int(2.0 * warp)
 				k += 1
 		k += 1
-	scripted = smoke or shot_path != "" or film_prefix != ""
+	scripted = smoke or shot_path != "" or film_prefix != "" or homes_smoke
 
-	world = World.new()
-	world.z_index = 1
-	back = JarBack.new()
-	back.z_index = -5
-	plant_layer = Node2D.new()
-	fx = Fx.new()
-	fx.z_index = 3
-	visitor_view = VisitorView.new()
-	visitor_view.z_index = 4
-	front = JarFront.new()
-	front.z_index = 6
 	hud = Hud.new()
 	sound = Sound.new()
-	add_child(back)
-	add_child(plant_layer)
-	add_child(world)
-	add_child(fx)
-	add_child(visitor_view)
-	add_child(front)
 	add_child(hud)
 	add_child(sound)
-	world.plant_added.connect(_on_plant_added)
-	world.plant_removed.connect(_on_plant_removed)
-	world.log_added.connect(_on_log_added)
-	world.happened.connect(_on_event)
-	var saved := {} if ((scripted and not use_save) or fresh) else _read_save()
-	world.setup(world_seed, 1500.0, 780.0, saved.get("world", {}))
-	back.setup(world)
-	front.setup(world)
-	fx.setup(world)
-	visitor_view.setup(world)
-	sound.setup(world)
+	sound.setup()
 	sound.muted = smoke
+	cam = Camera2D.new()
+	add_child(cam)
+	fade = ColorRect.new()
+	fade.color = Color(0.02, 0.03, 0.03, 0.0)
+	fade.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	fade.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+	hud.add_child(fade)
+	var saved := {} if ((scripted and not use_save) or fresh) else _read_save()
 	if saved.is_empty():
+		homes = [{"kind": start_kind, "state": {}, "left": 0.0}]
+		home = 0
+		_build(start_kind, {}, world_seed)
 		world.sun_phi = start_phi
 		world.sow_starters()
 	else:
+		homes = saved.homes
+		home = saved.home
+		_build(homes[home].kind, homes[home].state, world_seed)
+		homes[home].state = {}
 		_restore(saved)
 	world.speed = start_speed
 	fast_latch = start_speed > 1.0
@@ -196,15 +214,137 @@ func _ready() -> void:
 	hud.set_wish(WISHES[wish_at][1] if not wish_done.has(WISHES[wish_at][0]) else "")
 	if not scripted and saved.is_empty():
 		hud.nudge("Drag the sun.  Swipe across a stem to snip it.  Hold still to let time run.", 9.0)
+	hud.home_picked.connect(func(i: int) -> void: _go_home(i))
 	hud.guide_btn.visible = not world.shapes.list.is_empty()
 	_show_pocket()
-
-	cam = Camera2D.new()
-	add_child(cam)
-	focus = Vector2(world.jar_w * 0.5, -world.jar_h * 0.5 + 6.0)
 	get_viewport().size_changed.connect(_fit)
 	_fit()
 	guide_frame = shot_frames - 20 if open_guide else -1
+
+
+func _spec(kind: String) -> Dictionary:
+	for h: Dictionary in HOMES:
+		if h.kind == kind:
+			return h
+	return HOMES[0]
+
+
+## Throw away the views of the current home (if any) and build a world for another.
+func _build(kind: String, state: Dictionary, world_seed: int) -> void:
+	if world != null:
+		for node: Node in [back, plant_layer, world, fx, visitor_view, front]:
+			remove_child(node)
+			node.queue_free()
+		views.clear()
+	var spec := _spec(kind).duplicate()
+	if override_h > 0.0 and homes.size() <= 1:
+		spec.h = override_h
+	world = World.new()
+	world.z_index = 1
+	world.kind = kind
+	world.has_lid = kind != "hillside"
+	back = JarBack.new()
+	back.z_index = -5
+	plant_layer = Node2D.new()
+	fx = Fx.new()
+	fx.z_index = 3
+	visitor_view = VisitorView.new()
+	visitor_view.z_index = 4
+	front = JarFront.new()
+	front.z_index = 6
+	for node: Node in [back, plant_layer, world, fx, visitor_view, front]:
+		add_child(node)
+		move_child(node, get_child_count() - 1)
+	world.plant_added.connect(_on_plant_added)
+	world.plant_removed.connect(_on_plant_removed)
+	world.log_added.connect(_on_log_added)
+	world.happened.connect(_on_event)
+	world.setup(world_seed, spec.w, spec.h, state)
+	back.setup(world)
+	front.setup(world)
+	fx.setup(world)
+	visitor_view.setup(world)
+	sound.attach(world)
+	zoom = 1.0
+	focus = Vector2(world.jar_w * 0.5, -world.jar_h * 0.5 + 6.0)
+	_fit()
+	_show_homes()
+
+
+func _show_homes() -> void:
+	var names: Array[String] = []
+	for h: Dictionary in homes:
+		names.append(_spec(h.kind).name)
+	hud.set_homes(names, home)
+
+
+## Move to another home on the shelf, or (i == homes.size()) open a new one
+## seeded from parents. Old homes catch up on the time they were left alone.
+func _go_home(i: int, parents: Array = []) -> void:
+	if moving_home or (i == home and parents.is_empty()):
+		return
+	if catch_until >= 0.0:
+		if i >= homes.size():
+			pending_home = parents
+		return
+	moving_home = true
+	_cancel()
+	await _fade_to(1.0)
+	var now := Time.get_unix_time_from_system()
+	homes[home].state = world.save_state()
+	homes[home].left = now
+	if i >= homes.size():
+		var kind: String = HOMES[mini(homes.size(), HOMES.size() - 1)].kind
+		homes.append({"kind": kind, "state": {}, "left": now})
+		home = homes.size() - 1
+		_build(kind, {}, randi())
+		world.sun_phi = 0.0
+		world.sow_from(parents, world.rng)
+		hud.say("A " + _spec(kind).name.to_lower() + ".", "The old home stays on the shelf, and keeps growing.", 6.0)
+		_first("home_" + kind, "a %s opened." % _spec(kind).name.to_lower())
+	else:
+		home = i
+		var state: Dictionary = homes[i].state
+		_build(homes[i].kind, state, randi())
+		homes[i].state = {}
+		var away := clampf(now - float(homes[i].left), 0.0, AWAY_CAP)
+		if away > 30.0:
+			_begin_catch_up(away)
+	save_game()
+	await _fade_to(0.0)
+	moving_home = false
+
+
+func _fade_to(a: float) -> void:
+	var tw := create_tween()
+	tw.tween_property(fade, "color:a", a, 0.6)
+	await tw.finished
+
+
+## The lineage that held the lid, and a seed from every other shape standing.
+func _parents_for_new_home(lid_plant: Plant) -> Array:
+	var out: Array = []
+	if lid_plant != null and not lid_plant.removed:
+		for k in 5:
+			out.append([lid_plant.genome, lid_plant.species, lid_plant.generation + 1])
+	var seen := {}
+	if lid_plant != null:
+		seen[lid_plant.species] = true
+	for p in world.plants:
+		if p.alive and not p.removed and p.mature and not seen.has(p.species):
+			seen[p.species] = true
+			out.append([p.genome, p.species, p.generation + 1])
+		if out.size() >= 12:
+			break
+	for item: Array in pocket:
+		if out.size() >= 14:
+			break
+		out.append(item)
+	if out.is_empty():
+		for p in world.plants:
+			if p.alive and not p.removed:
+				out.append([p.genome, p.species, p.generation + 1])
+	return out
 
 
 func _fit() -> void:
@@ -253,7 +393,14 @@ func _read_save() -> Dictionary:
 	if f == null:
 		return {}
 	var data: Variant = f.get_var()
-	if typeof(data) != TYPE_DICTIONARY or data.get("version", 0) != 1 or not data.has("world"):
+	if typeof(data) != TYPE_DICTIONARY:
+		return {}
+	if data.get("version", 0) == 1 and data.has("world"):
+		# One jar, from before homes could grow.
+		data.homes = [{"kind": "jar", "state": data.world, "left": data.at}]
+		data.home = 0
+		data.version = 2
+	if data.get("version", 0) != 2 or not data.has("homes") or data.homes.is_empty():
 		return {}
 	return data
 
@@ -264,8 +411,15 @@ func save_game() -> void:
 	var items := []
 	for item: Array in pocket:
 		items.append([item[0].h, item[0].hue, item[1], item[2]])
+	var now := Time.get_unix_time_from_system()
+	var hs := []
+	for i in homes.size():
+		if i == home:
+			hs.append({"kind": homes[i].kind, "state": world.save_state(), "left": now})
+		else:
+			hs.append(homes[i])
 	var data := {
-		"version": 1, "at": Time.get_unix_time_from_system(), "world": world.save_state(),
+		"version": 2, "at": now, "homes": hs, "home": home,
 		"unlocked": unlocked, "firsts": firsts, "stamps": stamps, "wish_done": wish_done, "wish_at": wish_at,
 		"records": records, "told": told, "pocket": items, "muted": sound.muted,
 	}
@@ -289,12 +443,17 @@ func _restore(d: Dictionary) -> void:
 	# The forest kept growing while the game was closed, up to a cap.
 	var away := clampf(Time.get_unix_time_from_system() - float(d.at) + pretend_away, 0.0, AWAY_CAP)
 	if away > 30.0:
-		catch_from = world.time
-		catch_until = world.time + away
-		Engine.time_scale = 6.0
-		Engine.physics_ticks_per_second = 360
-		Engine.max_physics_steps_per_frame = 12
-		hud.say("Catching up on %d minutes away…" % maxi(1, int(away / 60.0)), "", 600.0)
+		_begin_catch_up(away)
+
+
+func _begin_catch_up(away: float) -> void:
+	catch_from = world.time
+	catch_until = world.time + away
+	journal = {"falls": 0, "biggest": 0, "shapes": [], "lid": false}
+	Engine.time_scale = 6.0
+	Engine.physics_ticks_per_second = 360
+	Engine.max_physics_steps_per_frame = 12
+	hud.say("Catching up on %d minutes away…" % maxi(1, int(away / 60.0)), "", 600.0)
 
 
 func _catch_up() -> void:
@@ -318,6 +477,10 @@ func _catch_up() -> void:
 	if journal.lid:
 		lines.append("Something touched the lid.")
 	hud.show_journal(lines)
+	if not pending_home.is_empty():
+		var parents := pending_home
+		pending_home = []
+		_go_home(homes.size(), parents)
 
 
 func _process(delta: float) -> void:
@@ -347,6 +510,8 @@ func _process(delta: float) -> void:
 		_open_guide()
 	if film_prefix != "":
 		_film()
+	if homes_smoke:
+		_homes_smoke()
 	if smoke and frame >= 600:
 		# The shipped build must be running Rapier, not Godot's fallback physics.
 		if PhysicsServer2D.get_class() == "RapierPhysicsServer2D":
@@ -360,7 +525,26 @@ func _process(delta: float) -> void:
 			save_game()
 		await RenderingServer.frame_post_draw
 		get_viewport().get_texture().get_image().save_png(shot_path)
-		print("SHOT ", shot_path, " t=", world.time, " plants=", world.plants.size(), " logs=", world.logs.size(), " falls=", world.count_falls, " fps=", Engine.get_frames_per_second(), " visitors=", world.visitors.counts)
+		print("SHOT ", shot_path, " t=", world.time, " plants=", world.plants.size(), " logs=", world.logs.size(), " falls=", world.count_falls, " fps=", Engine.get_frames_per_second(), " visitors=", world.visitors.counts, " home=", world.kind, " homes=", homes.size())
+		get_tree().quit()
+
+
+func _homes_smoke() -> void:
+	world.speed = FAST
+	match homes_smoke_step:
+		0:
+			if homes.size() == 2 and not moving_home and world.kind == "tank":
+				print("opened tank: plants=%d" % world.plants.size())
+				homes_smoke_step = 1
+				_go_home(0)
+		1:
+			if not moving_home and world.kind == "jar":
+				var ok: bool = world.plants.size() > 0 and homes[1].state.has("plants") and homes[0].state.is_empty()
+				print("back in jar: plants=%d cracked=%s tank saved plants=%d" % [world.plants.size(), world.cracked, homes[1].state.get("plants", []).size()])
+				print("HOMES_SMOKE_PASS" if ok else "ERROR: homes round trip lost state")
+				get_tree().quit()
+	if frame > 60 * 240:
+		print("ERROR: homes smoke timed out at step %d" % homes_smoke_step)
 		get_tree().quit()
 
 
@@ -468,6 +652,15 @@ func _on_event(kind: String, d: Dictionary) -> void:
 			if _first("lid", "a %s touched the lid." % _shape_name(d.plant.species)):
 				hud.say("It touched the lid.", "", 4.0)
 			_grant("lid")
+		"lid_held":
+			if world.has_lid and home == homes.size() - 1 and homes.size() < HOMES.size():
+				_first("crack_" + world.kind, "a %s held the lid and cracked the %s." % [_shape_name(d.plant.species), _spec(world.kind).name.to_lower()])
+				hud.say("The glass has cracked.", "A bigger home is opening…", 5.0)
+				sound.play("snap", 0.45, -2.0)
+				sound.play("note", 0.5, -6.0)
+				shake = 1.0
+				var parents := _parents_for_new_home(d.plant)
+				get_tree().create_timer(4.5).timeout.connect(func() -> void: _go_home(homes.size(), parents))
 		"impact":
 			shake = maxf(shake, clampf(d.volume / 7000.0, 0.0, 1.0) * clampf(d.speed / 200.0, 0.2, 1.0))
 		"visitor":

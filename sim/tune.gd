@@ -37,6 +37,7 @@ const LEAF_N := 3.0          # nutrient held per optical leaf width
 
 # --- population ---
 const MAX_PLANTS := 170
+const LID_HOLD := 20.0        # forest seconds a plant must press on the lid to crack it
 const MAX_SEEDS := 320
 const MAX_LOGS := 60
 const SPACING := 9.0

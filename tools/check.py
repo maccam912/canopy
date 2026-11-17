@@ -10,4 +10,8 @@ if __name__ == "__main__":
         output = run(["--headless", "--fixed-fps", "60", "--script", "res://tests/" + script + ".gd"], timeout=limit)
         if marker not in output:
             raise RuntimeError(script + " did not finish")
+    # The real game: crack a short jar, open the tank, then go back to the jar.
+    output = run(["--headless", "--fixed-fps", "60", "--", "--homes-smoke"], timeout=300)
+    if "HOMES_SMOKE_PASS" not in output:
+        raise RuntimeError("homes smoke test did not pass")
     print("CHECK_PASS")

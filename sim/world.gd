@@ -58,8 +58,8 @@ var grip_acc := 0.0
 var shapes_standing := 0
 var tallest_ever := 0.0
 var jar_w := 1500.0
-var jar_h := 780.0
-var lid_y := -780.0
+var jar_h := 620.0
+var lid_y := -620.0
 var soil := Soil.new()
 var light := LightField.new()
 var shapes := Shapes.new()
@@ -70,6 +70,12 @@ var body_plant := {}
 var ground_rid := RID()
 var wall_rid := RID()
 var visitors: Visitors
+var kind := "jar"
+var has_lid := true
+var cracked := false
+var crack_x := 0.0
+var lid_told := {}
+var max_plants := T.MAX_PLANTS
 var occupied := PackedInt32Array()
 var seed_cols := PackedInt32Array()
 
@@ -103,7 +109,7 @@ var count_rotted := 0
 var best_cascade := 0
 
 
-func setup(p_seed: int, w := 1500.0, h := 780.0, state := {}) -> void:
+func setup(p_seed: int, w := 1500.0, h := 620.0, state := {}) -> void:
 	rng.seed = p_seed
 	jar_w = w
 	jar_h = h
@@ -111,6 +117,7 @@ func setup(p_seed: int, w := 1500.0, h := 780.0, state := {}) -> void:
 		jar_w = state.jar_w
 		jar_h = state.jar_h
 	lid_y = -jar_h
+	max_plants = int(T.MAX_PLANTS * clampf(jar_w / 1500.0, 1.0, 1.6))
 	soil.setup(jar_w, rng)
 	visitors = Visitors.new(self)
 	occupied.resize(soil.n)
@@ -159,7 +166,7 @@ func save_state() -> Dictionary:
 			continue
 		bs.append({"tie": b.tie, "a": b.a.id, "a_at": b.a_at, "b": b.b.id if b.tie else -1, "b_at": b.b_at, "length": b.length, "stiff": b.stiff, "limit": b.limit})
 	return {
-		"version": 1, "jar_w": jar_w, "jar_h": jar_h, "time": time, "clock": clock, "sun_phi": sun_phi, "sun_vel": sun_vel,
+		"version": 1, "kind": kind, "cracked": cracked, "jar_w": jar_w, "jar_h": jar_h, "time": time, "clock": clock, "sun_phi": sun_phi, "sun_vel": sun_vel,
 		"next_id": next_id, "rng": rng.state, "soil_height": soil.height, "soil_rich": soil.rich, "soil_wet": soil.wet,
 		"shapes": shapes.list, "names": shapes.used_names, "plants": ps, "seeds": ss, "logs": ls, "braces": bs,
 		"count_falls": count_falls, "count_born": count_born, "count_died": count_died, "count_rotted": count_rotted,
@@ -168,6 +175,8 @@ func save_state() -> Dictionary:
 
 
 func _load(d: Dictionary) -> void:
+	kind = d.get("kind", "jar")
+	cracked = d.get("cracked", false)
 	time = d.time
 	clock = d.clock
 	sun_phi = d.sun_phi
@@ -914,7 +923,7 @@ func _seeds(bdt: float) -> void:
 				s.check = 0.0
 				var c := soil.col(s.x)
 				var need := lerpf(0.3, 0.05, s.genome.h[Genome.THRIFT])
-				if occupied[c] == 0 and plants.size() < T.MAX_PLANTS and soil.light[c] >= need:
+				if occupied[c] == 0 and plants.size() < max_plants and soil.light[c] >= need:
 					add_plant(s.genome, s.x, s.reserve, s.species, s.generation)
 					seed_cols[c] -= 1
 					happened.emit("sprout", {"x": s.x, "y": s.y})
@@ -1028,7 +1037,33 @@ func on_leaf_drop(p: Plant, i: int) -> void:
 
 
 func on_lid(p: Plant) -> void:
-	happened.emit("lid", {"plant": p})
+	if not lid_told.has(p.id):
+		lid_told[p.id] = true
+		happened.emit("lid", {"plant": p})
+	# A plant that holds the lid long enough cracks the glass.
+	if has_lid and not cracked and p.lid_time >= T.LID_HOLD:
+		cracked = true
+		crack_x = p.bx[p.n - 1] if p.n > 0 else p.base_x
+		happened.emit("lid_held", {"plant": p, "x": crack_x})
+
+
+## The longest any living plant has been pressing on the lid, 0..1 of a hold.
+func lid_pressure() -> float:
+	var best := 0.0
+	for p in plants:
+		if p.alive and not p.removed:
+			best = maxf(best, p.lid_time)
+	return clampf(best / T.LID_HOLD, 0.0, 1.0)
+
+
+## Seed a new home from an old one: the lineage that cracked the glass, and a
+## seed from every other shape still standing.
+func sow_from(parents: Array, rng_src: RandomNumberGenerator) -> void:
+	var slots := parents.size()
+	for k in slots:
+		var g: Genome = parents[k][0]
+		var x := jar_w * (0.06 + 0.88 * fposmod(k * 0.618 + 0.3, 1.0))
+		add_plant(g.child(rng_src), x, 60.0 + 200.0 * g.h[Genome.SEED], parents[k][1], parents[k][2])
 
 
 ## Scatter a first handful of very different seeds.

@@ -8,6 +8,7 @@ signal speed_toggled
 signal guide_opened
 signal wish_skipped
 signal sound_toggled
+signal home_picked(index: int)
 
 
 class IconButton:
@@ -115,6 +116,7 @@ var wish: Button
 var hint: Label
 var hint_time := 0.0
 var guide: Guide
+var shelf: HBoxContainer
 
 
 func _ready() -> void:
@@ -196,6 +198,14 @@ func _ready() -> void:
 	wish.pressed.connect(func() -> void: wish_skipped.emit())
 	root.add_child(wish)
 
+	shelf = HBoxContainer.new()
+	shelf.set_anchors_and_offsets_preset(Control.PRESET_CENTER_TOP)
+	shelf.grow_horizontal = Control.GROW_DIRECTION_BOTH
+	shelf.offset_top = 10.0
+	shelf.add_theme_constant_override("separation", 6)
+	shelf.visible = false
+	root.add_child(shelf)
+
 	guide = Guide.new()
 	guide.visible = false
 	root.add_child(guide)
@@ -217,10 +227,30 @@ func _label(size: int, colour: Color) -> Label:
 func blocks(at: Vector2) -> bool:
 	if guide.visible:
 		return true
+	if shelf.visible and shelf.get_global_rect().grow(4.0).has_point(at):
+		return true
 	for b: Control in [speed_btn, guide_btn, sound_btn, wish] + tool_btns.values():
 		if b.is_visible_in_tree() and b.get_global_rect().grow(4.0).has_point(at):
 			return true
 	return false
+
+
+## The shelf of homes: every jar the forest has outgrown, still growing.
+func set_homes(names: Array[String], current: int) -> void:
+	for c in shelf.get_children():
+		c.queue_free()
+	shelf.visible = names.size() > 1
+	for i in names.size():
+		var b := Button.new()
+		b.text = names[i]
+		b.flat = i != current
+		b.focus_mode = Control.FOCUS_NONE
+		b.custom_minimum_size = Vector2(0, 40)
+		b.add_theme_font_size_override("font_size", 15)
+		b.add_theme_color_override("font_color", Color(1.0, 0.92, 0.7) if i == current else Color(0.85, 0.85, 0.8, 0.7))
+		var idx := i
+		b.pressed.connect(func() -> void: home_picked.emit(idx))
+		shelf.add_child(b)
 
 
 func say(title: String, sub := "", seconds := 4.5) -> void:

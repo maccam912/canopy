@@ -17,8 +17,12 @@ var rain_level := 0.0
 var muted := false
 
 
-func setup(w: World) -> void:
+func attach(w: World) -> void:
 	world = w
+	world.happened.connect(_on_event)
+
+
+func setup() -> void:
 	var rng := RandomNumberGenerator.new()
 	rng.seed = 12345
 	bank["note"] = _note(rng)
@@ -45,7 +49,6 @@ func setup(w: World) -> void:
 	rain_player.volume_db = -60.0
 	add_child(rain_player)
 	rain_player.play()
-	world.happened.connect(_on_event)
 
 
 func play(name: String, pitch := 1.0, db := 0.0) -> void:
@@ -97,6 +100,8 @@ func drip() -> void:
 
 
 func _process(delta: float) -> void:
+	if world == null or not is_instance_valid(world):
+		return
 	# Creaks rise in pitch as strain builds.
 	creak_wait -= delta
 	if creak_wait <= 0.0:

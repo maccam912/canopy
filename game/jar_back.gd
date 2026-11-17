@@ -57,6 +57,16 @@ func _draw() -> void:
 	var low := Color(0.04, 0.07, 0.08)
 	draw_polygon(PackedVector2Array([Vector2(0, -h), Vector2(w, -h), Vector2(w, -h * 0.45), Vector2(0, -h * 0.45)]), PackedColorArray([top, top, mid, mid]))
 	draw_polygon(PackedVector2Array([Vector2(0, -h * 0.45), Vector2(w, -h * 0.45), Vector2(w, 90), Vector2(0, 90)]), PackedColorArray([mid, mid, low, low]))
+	if world.kind == "hillside":
+		# Distant hills, far behind the forest.
+		for layer in 2:
+			var hills := PackedVector2Array()
+			for k in 61:
+				var x := w * k / 60.0
+				hills.append(Vector2(x, -h * (0.32 - layer * 0.12) - 55.0 * sin(k * 0.31 + layer * 2.0) - 30.0 * sin(k * 0.11 + 1.0)))
+			hills.append(Vector2(w, 90.0))
+			hills.append(Vector2(0.0, 90.0))
+			draw_colored_polygon(hills, Color(0.07, 0.11, 0.11) if layer == 0 else Color(0.05, 0.08, 0.08))
 
 
 func _draw_shafts() -> void:

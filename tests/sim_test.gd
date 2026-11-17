@@ -11,6 +11,8 @@ var logs_before := 0
 var target: Plant
 var owl_at := -1
 var cut_log: LogBody
+var low: World
+var cracked_at := -1.0
 var fall_at := -1
 
 
@@ -157,6 +159,22 @@ func _process(_delta: float) -> bool:
 				check(same and absf(tall_a - tall_b) < 2.0, "a saved jar loads back the same (%d plants, %d logs, tallest %.0f vs %.0f)" % [copy.plants.size(), copy.logs.size(), tall_a, tall_b])
 				check(copy.shapes.list.size() == world.shapes.list.size(), "the field guide survives a save")
 				copy.queue_free()
+				# A low lid gets pressed on, held, and cracked.
+				low = World.new()
+				root.add_child(low)
+				low.setup(4, 900.0, 170.0)
+				low.sow_starters()
+				low.speed = 8.0
+				low.happened.connect(func(k: String, _d: Dictionary) -> void:
+					if k == "lid_held":
+						cracked_at = low.time)
+				stage = 4
+				frames = 0
+				return false
+		4:
+			if cracked_at >= 0.0 or frames > 60 * 120:
+				check(cracked_at >= 0.0, "a plant that holds the lid cracks the glass (at %.0f s)" % cracked_at)
+				check(low.cracked and low.lid_pressure() > 0.0, "the cracked jar remembers it")
 				print("SIM_PASS" if failures == 0 else "SIM_FAILED %d" % failures)
 				return true
 	return false
