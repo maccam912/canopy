@@ -52,10 +52,10 @@ Tools arrive from events in the forest, never from a shop:
   hang their weight there.
 - **The jar grows.** When a plant presses on the lid and holds, the glass
   cracks and a bigger home opens: jar, tank, greenhouse, then an open hillside.
-  Old homes stay on the shelf at the top of the screen and keep growing; tap
-  one to go back, and it catches up on the time it was left alone.
-- **Away time.** The forest keeps growing while the game is closed (up to 20
-  minutes), and a short journal says what happened.
+  Old homes rest on the shelf at the top of the screen. Tap one to pick up
+  where you left it.
+- **Pausing.** The active forest pauses when Canopy is in the background
+  or the window loses focus. Closing the game saves your progress for next time.
 - **Wishes** (top right) can only be met by setting up a climate. Tap to skip.
 
 ## Develop

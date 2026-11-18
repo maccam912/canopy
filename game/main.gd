@@ -85,19 +85,15 @@ var scripted := false
 var fresh := false
 var use_save := false
 var save_at_end := false
-var pretend_away := 0.0
 var save_acc := 0.0
-var catch_until := -1.0
-var catch_from := 0.0
-var journal := {"falls": 0, "biggest": 0, "shapes": [], "lid": false}
+var app_focused := true
+var app_suspended := false
 
 const SAVE_PATH := "user://canopy.save"
-const AWAY_CAP := 20.0 * 60.0
 var guide_frame := -1
-var homes: Array = []        # {kind, state (saved world, empty for the live one), left (unix time)}
+var homes: Array = []        # {kind, state (saved world, empty for the live one)}
 var home := 0
 var moving_home := false
-var pending_home: Array = [] # a new home waiting for a catch-up to finish: [parents]
 var fade: ColorRect
 var override_h := 0.0
 var homes_smoke := false
@@ -159,9 +155,6 @@ func _ready() -> void:
 				use_save = true
 			"--save-at-end":
 				save_at_end = true
-			"--away":
-				pretend_away = float(args[k + 1])
-				k += 1
 			"--all-tools":
 				for name: String in TOOL_NOTES:
 					unlocked[name] = true
@@ -190,7 +183,7 @@ func _ready() -> void:
 	hud.add_child(fade)
 	var saved := {} if ((scripted and not use_save) or fresh) else _read_save()
 	if saved.is_empty():
-		homes = [{"kind": start_kind, "state": {}, "left": 0.0}]
+		homes = [{"kind": start_kind, "state": {}}]
 		home = 0
 		_build(start_kind, {}, world_seed)
 		world.sun_phi = start_phi
@@ -279,37 +272,28 @@ func _show_homes() -> void:
 
 
 ## Move to another home on the shelf, or (i == homes.size()) open a new one
-## seeded from parents. Old homes catch up on the time they were left alone.
+## seeded from parents. Shelved homes resume from their saved state.
 func _go_home(i: int, parents: Array = []) -> void:
 	if moving_home or (i == home and parents.is_empty()):
-		return
-	if catch_until >= 0.0:
-		if i >= homes.size():
-			pending_home = parents
 		return
 	moving_home = true
 	_cancel()
 	await _fade_to(1.0)
-	var now := Time.get_unix_time_from_system()
 	homes[home].state = world.save_state()
-	homes[home].left = now
 	if i >= homes.size():
 		var kind: String = HOMES[mini(homes.size(), HOMES.size() - 1)].kind
-		homes.append({"kind": kind, "state": {}, "left": now})
+		homes.append({"kind": kind, "state": {}})
 		home = homes.size() - 1
 		_build(kind, {}, randi())
 		world.sun_phi = 0.0
 		world.sow_from(parents, world.rng)
-		hud.say("A " + _spec(kind).name.to_lower() + ".", "The old home stays on the shelf, and keeps growing.", 6.0)
+		hud.say("A " + _spec(kind).name.to_lower() + ".", "The old home rests on the shelf until you return.", 6.0)
 		_first("home_" + kind, "a %s opened." % _spec(kind).name.to_lower())
 	else:
 		home = i
 		var state: Dictionary = homes[i].state
 		_build(homes[i].kind, state, randi())
 		homes[i].state = {}
-		var away := clampf(now - float(homes[i].left), 0.0, AWAY_CAP)
-		if away > 30.0:
-			_begin_catch_up(away)
 	save_game()
 	await _fade_to(0.0)
 	moving_home = false
@@ -397,7 +381,7 @@ func _read_save() -> Dictionary:
 		return {}
 	if data.get("version", 0) == 1 and data.has("world"):
 		# One jar, from before homes could grow.
-		data.homes = [{"kind": "jar", "state": data.world, "left": data.at}]
+		data.homes = [{"kind": "jar", "state": data.world}]
 		data.home = 0
 		data.version = 2
 	if data.get("version", 0) != 2 or not data.has("homes") or data.homes.is_empty():
@@ -411,15 +395,12 @@ func save_game() -> void:
 	var items := []
 	for item: Array in pocket:
 		items.append([item[0].h, item[0].hue, item[1], item[2]])
-	var now := Time.get_unix_time_from_system()
 	var hs := []
 	for i in homes.size():
-		if i == home:
-			hs.append({"kind": homes[i].kind, "state": world.save_state(), "left": now})
-		else:
-			hs.append(homes[i])
+		var state: Dictionary = world.save_state() if i == home else homes[i].state
+		hs.append({"kind": homes[i].kind, "state": state})
 	var data := {
-		"version": 2, "at": now, "homes": hs, "home": home,
+		"version": 2, "homes": hs, "home": home,
 		"unlocked": unlocked, "firsts": firsts, "stamps": stamps, "wish_done": wish_done, "wish_at": wish_at,
 		"records": records, "told": told, "pocket": items, "muted": sound.muted,
 	}
@@ -440,53 +421,12 @@ func _restore(d: Dictionary) -> void:
 		pocket.append([Genome.make(Array(item[0]), item[1]), item[2], item[3]])
 	if d.muted:
 		_toggle_sound()
-	# The forest kept growing while the game was closed, up to a cap.
-	var away := clampf(Time.get_unix_time_from_system() - float(d.at) + pretend_away, 0.0, AWAY_CAP)
-	if away > 30.0:
-		_begin_catch_up(away)
-
-
-func _begin_catch_up(away: float) -> void:
-	catch_from = world.time
-	catch_until = world.time + away
-	journal = {"falls": 0, "biggest": 0, "shapes": [], "lid": false}
-	Engine.time_scale = 6.0
-	Engine.physics_ticks_per_second = 360
-	Engine.max_physics_steps_per_frame = 12
-	hud.say("Catching up on %d minutes away…" % maxi(1, int(away / 60.0)), "", 600.0)
-
-
-func _catch_up() -> void:
-	world.speed = 24.0
-	if world.time < catch_until:
-		return
-	catch_until = -1.0
-	Engine.time_scale = 1.0
-	Engine.physics_ticks_per_second = 60
-	Engine.max_physics_steps_per_frame = 4
-	hud.toast_time = 0.0
-	var lines: Array[String] = []
-	var minutes := int((world.time - catch_from) / 60.0)
-	lines.append("The forest grew for %d minute%s." % [minutes, "" if minutes == 1 else "s"])
-	if journal.falls > 0:
-		lines.append("%d fall%s%s." % [journal.falls, "" if journal.falls == 1 else "s", (", the biggest taking down %d" % journal.biggest) if journal.biggest >= 2 else ""])
-	else:
-		lines.append("Nothing fell.")
-	for name: String in journal.shapes:
-		lines.append("A new shape appeared: %s." % name)
-	if journal.lid:
-		lines.append("Something touched the lid.")
-	hud.show_journal(lines)
-	if not pending_home.is_empty():
-		var parents := pending_home
-		pending_home = []
-		_go_home(homes.size(), parents)
 
 
 func _process(delta: float) -> void:
 	frame += 1
 	save_acc += delta
-	if save_acc > 30.0 and catch_until < 0.0:
+	if save_acc > 30.0:
 		save_acc = 0.0
 		save_game()
 	if gesture == "hold" and not holding_fast and Time.get_ticks_msec() * 0.001 - down_time > 0.32:
@@ -494,9 +434,7 @@ func _process(delta: float) -> void:
 	if gesture == "pour":
 		_pour(delta)
 	var want_fast := fast_latch or holding_fast or Input.is_key_pressed(KEY_SPACE)
-	if catch_until >= 0.0:
-		_catch_up()
-	elif not scripted:
+	if not scripted:
 		world.speed = FAST if want_fast else 1.0
 	hud.set_fast(want_fast, world.falling)
 	if gesture != "blow" and world.wind != 0.0:
@@ -598,15 +536,6 @@ func _shape_name(id: int) -> String:
 
 
 func _on_event(kind: String, d: Dictionary) -> void:
-	if catch_until >= 0.0:
-		match kind:
-			"fall":
-				journal.falls += 1
-				journal.biggest = maxi(journal.biggest, d.count)
-			"new_shape":
-				journal.shapes.append(d.shape.name)
-			"lid":
-				journal.lid = true
 	match kind:
 		"seeded":
 			if _first("seed", "the first seed ripened, on a %s." % _shape_name(d.plant.species)):
@@ -660,7 +589,7 @@ func _on_event(kind: String, d: Dictionary) -> void:
 				sound.play("note", 0.5, -6.0)
 				shake = 1.0
 				var parents := _parents_for_new_home(d.plant)
-				get_tree().create_timer(4.5).timeout.connect(func() -> void: _go_home(homes.size(), parents))
+				get_tree().create_timer(4.5, false).timeout.connect(func() -> void: _go_home(homes.size(), parents))
 		"impact":
 			shake = maxf(shake, clampf(d.volume / 7000.0, 0.0, 1.0) * clampf(d.speed / 200.0, 0.2, 1.0))
 		"visitor":
@@ -839,6 +768,7 @@ func _unhandled_input(event: InputEvent) -> void:
 				if hud.guide.visible:
 					hud.guide.visible = false
 				elif OS.get_name() != "Android":
+					save_game()
 					get_tree().quit()
 			KEY_1, KEY_2, KEY_3, KEY_4, KEY_5, KEY_6:
 				var names := ["snip", "jar", "prop", "water", "tie", "wind"]
@@ -848,11 +778,35 @@ func _unhandled_input(event: InputEvent) -> void:
 
 
 func _notification(what: int) -> void:
-	if what == NOTIFICATION_WM_GO_BACK_REQUEST and hud != null and hud.guide.visible:
-		hud.guide.visible = false
-	elif what == NOTIFICATION_WM_CLOSE_REQUEST or what == NOTIFICATION_APPLICATION_PAUSED or what == NOTIFICATION_WM_GO_BACK_REQUEST:
-		if catch_until < 0.0:
+	if world == null:
+		return
+	match what:
+		NOTIFICATION_APPLICATION_FOCUS_OUT:
+			app_focused = false
+		NOTIFICATION_APPLICATION_FOCUS_IN:
+			app_focused = true
+		NOTIFICATION_APPLICATION_PAUSED:
+			app_suspended = true
+		NOTIFICATION_APPLICATION_RESUMED:
+			app_suspended = false
+		NOTIFICATION_WM_CLOSE_REQUEST:
 			save_game()
+			return
+		NOTIFICATION_WM_GO_BACK_REQUEST:
+			if hud.guide.visible:
+				hud.guide.visible = false
+			else:
+				save_game()
+			return
+		_:
+			return
+
+	var paused := app_suspended or not app_focused
+	if paused and not get_tree().paused:
+		_cancel()
+		touches.clear()
+		save_game()
+	get_tree().paused = paused
 
 
 func _down(screen: Vector2) -> void:

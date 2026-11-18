@@ -144,11 +144,11 @@ A finished wish earns a stamp in the field guide and nothing else.
 
 ### The jar grows
 
-When a plant touches the lid and holds, the glass cracks and a bigger home opens: jar, then tank, then greenhouse, then hillside. Old jars stay on the shelf and keep growing. The seed jar moves seeds between them.
+When a plant touches the lid and holds, the glass cracks and a bigger home opens: jar, then tank, then greenhouse, then hillside. Old jars rest on the shelf until you return to them. The seed jar moves seeds between them.
 
-### Away time
+### Pausing
 
-The forest keeps growing while the game is closed, up to a cap. On return, a short journal lists the headline events. Any stump can be cut to read the plant's life in its rings, wide for bright years and narrow for shaded ones.
+The forest pauses when Canopy is in the background or the window loses focus. Reopening the game resumes from the saved state. Any stump can be cut to read the plant's life in its rings, wide for bright years and narrow for shaded ones.
 
 ## A 20-minute session
 
@@ -156,7 +156,7 @@ This is the experience to aim for, written as a returning player in a mid-game t
 
 | Minute | What happens |
 | --- | --- |
-| 0 | You open the tank. The journal reports two falls overnight and one new shape. Poles wall off the left side, and Lurkers crowd under a rotting log on the right. |
+| 0 | You reopen the tank where you left it. Poles wall off the left side, and Lurkers crowd under a rotting log on the right. |
 | 1 | The field guide shows the new shape: a pale vine riding the Poles, named Hanging Thread. |
 | 2 | The pinned wish reads "A fall that takes down ten." Eleven Poles stand in a row, so you decide to set it up. |
 | 3 | You park the sun low on the right and fast-forward. The Poles begin bending toward it. |
@@ -169,7 +169,7 @@ This is the experience to aim for, written as a returning player in a mid-game t
 | 15 | Light floods the floor and hundreds of sprouts appear. Beetles arrive on the fallen wood. |
 | 16 | Many of the new Poles are bendier than their parents, because the stiff ones were the ones that snapped. You pocket a seed from a survivor. |
 | 18 | You swing the sun slowly back and forth. The bendy sprouts follow it. A new shape may be forming, but it has no name yet. |
-| 20 | You park the sun overhead and close the tank. It keeps growing. |
+| 20 | You park the sun overhead and close the tank. It will be there when you return. |
 
 The early snap at minute 8 is the important beat. A failed setup still produces a fall, a gap and a new generation, so there is no losing move.
 
@@ -199,7 +199,7 @@ These are deliberate omissions, and each protects a pillar.
 - **No score, currency, timers or fail states.** They turn a playground into a job.
 - **No plant designer or habit editor.** Designing a plant would make you the gardener.
 - **No tech tree or building.** Tools arrive from events in the forest.
-- **No streaks or penalties for being away.** Away time only ever adds.
+- **No streaks or penalties for being away.** The forest waits for you.
 - **No second ecosystem.** Visitors nudge loops, but there are no herbivores or predators to manage.
 - **No 3D.** The side view keeps light and shade readable.
 
@@ -210,7 +210,7 @@ Monoculture is the biggest risk, and none of the answers below has been tested y
 | Risk | Why it matters | Planned answer |
 | --- | --- | --- |
 | Monoculture | One shape wins and the forest looks the same forever | The player is the disturbance. Storms and terrain back up a passive player. Visitors and wishes reward variety |
-| Dead time between falls | Zen tips over into boring | Fast-forward, visible strain, the owl's warning, growth while away |
+| Dead time between falls | Zen tips over into boring | Fast-forward, visible strain, the owl's warning |
 | Evolution at the wrong speed | Too slow to notice, or too fast to follow | Tune nudge size and generation time. Lineage colors and field guide alerts make change visible |
 | Degenerate winners | A carpet of weeds that never grows up, or one tower that never dies | Upkeep rises with size and shade kills carpets. Both need proof in the prototype |
 | Too indirect | Wishes feel like luck, not play | Snip, prop, tie and the seed jar give direct control over the release |
@@ -242,7 +242,7 @@ The first build answers one question: do the two rules alone produce falls worth
 
 **Out of scope**
 
-Field guide, visitors, wishes, the growing jar, away time, water, wind, and all sound beyond a single fall note.
+Field guide, visitors, wishes, the growing jar, water, wind, and all sound beyond a single fall note.
 
 **It passes if**, after an hour running unattended and twenty minutes of poking:
 
