@@ -202,6 +202,12 @@ func _ready() -> void:
 	hud.guide_opened.connect(_open_guide)
 	hud.wish_skipped.connect(_next_wish)
 	hud.sound_toggled.connect(_toggle_sound)
+	hud.planting_menu.about_to_popup.connect(func() -> void:
+		_cancel()
+		touches.clear())
+	hud.varieties_requested.connect(_add_varieties)
+	hud.home_reset_requested.connect(_confirm_home_reset)
+	hud.reset_dialog.confirmed.connect(_reset_home)
 	for name: String in unlocked:
 		hud.unlock(name, false)
 	hud.set_wish(WISHES[wish_at][1] if not wish_done.has(WISHES[wish_at][0]) else "")
@@ -223,7 +229,7 @@ func _spec(kind: String) -> Dictionary:
 
 
 ## Throw away the views of the current home (if any) and build a world for another.
-func _build(kind: String, state: Dictionary, world_seed: int) -> void:
+func _build(kind: String, state: Dictionary, world_seed: int, dimensions := Vector2.ZERO) -> void:
 	if world != null:
 		for node: Node in [back, plant_layer, world, fx, visitor_view, front]:
 			remove_child(node)
@@ -232,6 +238,9 @@ func _build(kind: String, state: Dictionary, world_seed: int) -> void:
 	var spec := _spec(kind).duplicate()
 	if override_h > 0.0 and homes.size() <= 1:
 		spec.h = override_h
+	if dimensions != Vector2.ZERO:
+		spec.w = dimensions.x
+		spec.h = dimensions.y
 	world = World.new()
 	world.z_index = 1
 	world.kind = kind
@@ -277,6 +286,8 @@ func _go_home(i: int, parents: Array = []) -> void:
 	if moving_home or (i == home and parents.is_empty()):
 		return
 	moving_home = true
+	hud.planting_menu.get_popup().hide()
+	hud.reset_dialog.hide()
 	_cancel()
 	await _fade_to(1.0)
 	homes[home].state = world.save_state()
@@ -295,6 +306,53 @@ func _go_home(i: int, parents: Array = []) -> void:
 		_build(homes[i].kind, state, randi())
 		homes[i].state = {}
 	save_game()
+	await _fade_to(0.0)
+	moving_home = false
+
+
+func _add_varieties() -> void:
+	if moving_home:
+		return
+	var added := world.sow_diverse(6)
+	if added == 0:
+		hud.nudge("There’s no room with enough light for another variety yet.")
+		return
+	hud.nudge("Planted %d new varieties in open soil." % added if added > 1 else "Planted a new variety in open soil.")
+	save_game()
+
+
+func _confirm_home_reset() -> void:
+	if moving_home:
+		return
+	var home_name: String = _spec(world.kind).name
+	hud.reset_dialog.title = "Reset the %s?" % home_name
+	hud.reset_dialog.dialog_text = "Start this home over with a wider mix of seedlings. Its plants, seeds, fallen wood and soil will be replaced."
+	hud.reset_dialog.popup_centered(Vector2i(440, 180))
+	hud.reset_dialog.get_cancel_button().grab_focus()
+
+
+func _reset_home() -> void:
+	if moving_home:
+		return
+	moving_home = true
+	await _fade_to(1.0)
+	var kind := world.kind
+	var dimensions := Vector2(world.jar_w, world.jar_h)
+	var known_shapes := world.shapes
+	for shape in known_shapes.list:
+		shape.alive = 0
+		shape.standing = 0
+	# This planting starts a new forest in the same shelf slot.
+	homes[home] = {"kind": kind, "state": {}}
+	_build(kind, {}, randi(), dimensions)
+	world.shapes = known_shapes
+	world.sow_diverse(16)
+	thumb_count = 0
+	shake = 0.0
+	hud.toast_queue.clear()
+	hud.toast_time = 0.0
+	save_game()
+	hud.nudge("A fresh planting in the %s." % _spec(kind).name.to_lower())
 	await _fade_to(0.0)
 	moving_home = false
 
@@ -392,6 +450,13 @@ func _read_save() -> Dictionary:
 func save_game() -> void:
 	if (scripted and not save_at_end) or world == null:
 		return
+	var data := _save_data()
+	var f := FileAccess.open(SAVE_PATH, FileAccess.WRITE)
+	if f != null:
+		f.store_var(data)
+
+
+func _save_data() -> Dictionary:
 	var items := []
 	for item: Array in pocket:
 		items.append([item[0].h, item[0].hue, item[1], item[2]])
@@ -399,14 +464,11 @@ func save_game() -> void:
 	for i in homes.size():
 		var state: Dictionary = world.save_state() if i == home else homes[i].state
 		hs.append({"kind": homes[i].kind, "state": state})
-	var data := {
+	return {
 		"version": 2, "homes": hs, "home": home,
 		"unlocked": unlocked, "firsts": firsts, "stamps": stamps, "wish_done": wish_done, "wish_at": wish_at,
 		"records": records, "told": told, "pocket": items, "muted": sound.muted,
 	}
-	var f := FileAccess.open(SAVE_PATH, FileAccess.WRITE)
-	if f != null:
-		f.store_var(data)
 
 
 func _restore(d: Dictionary) -> void:
@@ -546,7 +608,7 @@ func _on_event(kind: String, d: Dictionary) -> void:
 				hud.guide_btn.glow = 2.0
 			hud.say("New shape: " + d.shape.name, Guide.habits(d.shape.h), 5.0)
 		"fall":
-			records.falls = world.count_falls
+			records.falls += 1
 			shake = maxf(shake, clampf(d.volume / 9000.0, 0.15, 0.9))
 			if _first("fall", "the first fall, a %s %d cm tall." % [_shape_name(d.species), int(d.height)]):
 				_unlock("prop")
@@ -589,7 +651,11 @@ func _on_event(kind: String, d: Dictionary) -> void:
 				sound.play("note", 0.5, -6.0)
 				shake = 1.0
 				var parents := _parents_for_new_home(d.plant)
-				get_tree().create_timer(4.5, false).timeout.connect(func() -> void: _go_home(homes.size(), parents))
+				var cracked_home: Dictionary = homes[home]
+				get_tree().create_timer(4.5, false).timeout.connect(func() -> void:
+					if is_same(homes.back(), cracked_home):
+						_go_home(homes.size(), parents)
+				)
 		"impact":
 			shake = maxf(shake, clampf(d.volume / 7000.0, 0.0, 1.0) * clampf(d.speed / 200.0, 0.2, 1.0))
 		"visitor":
@@ -622,7 +688,7 @@ func _on_event(kind: String, d: Dictionary) -> void:
 			if d.plant.grips >= 2:
 				_first("vine", "the first vine: a plant riding on a %s." % _shape_name(d.host.species))
 		"census":
-			records.tallest = world.tallest_ever
+			records.tallest = maxf(records.tallest, world.tallest_ever)
 			if world.shapes_standing >= 4:
 				_grant("shapes4")
 			if world.shapes_standing >= 5:
@@ -705,6 +771,8 @@ func to_world(screen: Vector2) -> Vector2:
 
 
 func _unhandled_input(event: InputEvent) -> void:
+	if moving_home or hud.reset_dialog.visible or hud.planting_menu.get_popup().visible:
+		return
 	if event is InputEventScreenTouch:
 		if event.pressed:
 			if hud.blocks(event.position):

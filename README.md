@@ -31,6 +31,10 @@ newest build from [Releases](https://github.com/maccam912/canopy/releases/latest
 | Pick a tool | tap it in the tray | keys 1–6 |
 | Field guide | the book button | G |
 
+Open **Planting** to add new varieties in open soil or restart the current home
+with a wider mix of seedlings. Resetting keeps the other homes, discoveries,
+unlocked tools and pocketed seeds.
+
 Tools arrive from events in the forest, never from a shop:
 
 | Tool | What it does | Arrives |

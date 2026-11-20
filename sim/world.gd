@@ -9,6 +9,25 @@ signal log_added(l: LogBody)
 signal log_removed(l: LogBody)
 signal happened(kind: String, data: Dictionary)
 
+const STARTER_HABITS := [
+	[0.10, 0.05, 0.25, 0.40, 0.30, 0.30, 0.60, 0.20],   # pole
+	[0.20, 0.90, 0.70, 0.90, 0.50, 0.60, 0.70, 0.30],   # umbrella
+	[0.30, 0.50, 0.60, 0.70, 0.50, 0.70, 0.40, 0.95],   # lurker
+	[0.40, 0.40, 0.20, 0.30, 0.10, 0.05, 0.02, 0.10],   # weed
+	[0.95, 0.30, 0.20, 0.50, 0.40, 0.30, 0.40, 0.20],   # chaser
+	[0.10, 0.50, 0.95, 0.60, 0.95, 0.80, 0.80, 0.40],   # anchor
+	[0.50, 0.20, 0.05, 0.80, 0.05, 0.10, 0.30, 0.10],   # toppler
+	[0.30, 0.80, 0.40, 0.10, 0.40, 0.20, 0.50, 0.40],   # feather
+]
+const EXTRA_HABITS := [
+	[0.12, 0.84, 0.55, 0.76, 0.58, 0.27, 0.06, 0.96],   # broad shade shrub
+	[0.78, 0.81, 0.18, 0.57, 0.32, 0.37, 0.21, 0.91],   # forked climber
+	[0.15, 0.18, 0.81, 0.22, 0.83, 0.62, 0.12, 0.82],   # stout understory
+	[0.72, 0.26, 0.36, 0.85, 0.39, 0.87, 0.12, 0.59],   # early, heavy seed
+	[0.45, 0.73, 0.88, 0.45, 0.78, 0.14, 0.33, 0.57],   # branching hardwood
+	[0.85, 0.56, 0.34, 0.18, 0.52, 0.12, 0.05, 0.73],   # fine-leaf scatterer
+]
+
 
 class SeedBit:
 	var x := 0.0
@@ -1076,28 +1095,65 @@ func sow_from(parents: Array, rng_src: RandomNumberGenerator) -> void:
 
 ## Scatter a first handful of very different seeds.
 func sow_starters() -> void:
-	var kinds := [
-		[0.10, 0.05, 0.25, 0.40, 0.30, 0.30, 0.60, 0.20],   # pole
-		[0.20, 0.90, 0.70, 0.90, 0.50, 0.60, 0.70, 0.30],   # umbrella
-		[0.30, 0.50, 0.60, 0.70, 0.50, 0.70, 0.40, 0.95],   # lurker
-		[0.40, 0.40, 0.20, 0.30, 0.10, 0.05, 0.02, 0.10],   # weed
-		[0.95, 0.30, 0.20, 0.50, 0.40, 0.30, 0.40, 0.20],   # chaser
-		[0.10, 0.50, 0.95, 0.60, 0.95, 0.80, 0.80, 0.40],   # anchor
-		[0.50, 0.20, 0.05, 0.80, 0.05, 0.10, 0.30, 0.10],   # toppler
-		[0.30, 0.80, 0.40, 0.10, 0.40, 0.20, 0.50, 0.40],   # feather
-	]
-	var order := range(kinds.size())
-	var slots := kinds.size() + 3
+	var slots := STARTER_HABITS.size() + 3
 	var hue0 := rng.randf()
 	for k in slots:
 		var g: Genome
-		if k < kinds.size():
-			g = Genome.make(kinds[order[k]], fposmod(hue0 + k * 0.618, 1.0))
+		if k < STARTER_HABITS.size():
+			g = Genome.make(STARTER_HABITS[k], fposmod(hue0 + k * 0.618, 1.0))
 			g = g.child(rng, 0.03)
 		else:
 			g = Genome.random(rng)
 		var x := jar_w * (0.06 + 0.88 * fposmod(k * 0.618 + 0.3, 1.0))
 		add_plant(g, x, 60.0 + 200.0 * g.h[Genome.SEED])
+
+
+## Transplant distinct lineages into vacant soil and match them to the light there.
+func sow_diverse(limit: int) -> int:
+	limit = mini(limit, max_plants - plants.size())
+	if limit <= 0:
+		return 0
+	compute_light()
+	var sites := PackedFloat32Array()
+	sites.resize(soil.n)
+	for c in range(1, soil.n - 1):
+		if occupied[c] == 0:
+			sites[c] = soil.light[c] * rng.randf_range(0.9, 1.0)
+
+	var mix := STARTER_HABITS + EXTRA_HABITS
+	var start := rng.randi_range(0, mix.size() - 1)
+	var hue := rng.randf()
+	var added := 0
+	for k in mix.size() + 16:
+		var g: Genome
+		if k < mix.size():
+			g = Genome.make(mix[(start + k) % mix.size()], fposmod(hue + k * 0.618, 1.0)).child(rng, 0.035)
+		else:
+			g = Genome.random(rng)
+		var distinct := true
+		for p in plants:
+			if p.alive and g.distance(p.genome) < Shapes.RADIUS:
+				distinct = false
+				break
+		if not distinct:
+			continue
+		var site := -1
+		var need := lerpf(0.3, 0.05, g.h[Genome.THRIFT])
+		var best := 0.0
+		for c in range(1, soil.n - 1):
+			if sites[c] > best and soil.light[c] >= need:
+				best = sites[c]
+				site = c
+		if site < 0:
+			continue
+		add_plant(g, (site + 0.5) * Soil.CW, 160.0 + 160.0 * g.h[Genome.SEED])
+		added += 1
+		if added >= limit:
+			break
+		# Leave gaps between transplants so one patch does not get the whole mix.
+		for c in range(maxi(0, site - 3), mini(soil.n, site + 4)):
+			sites[c] = 0.0
+	return added
 
 
 func living() -> int:

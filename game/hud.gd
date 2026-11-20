@@ -9,6 +9,8 @@ signal guide_opened
 signal wish_skipped
 signal sound_toggled
 signal home_picked(index: int)
+signal varieties_requested
+signal home_reset_requested
 
 
 class IconButton:
@@ -117,6 +119,8 @@ var hint: Label
 var hint_time := 0.0
 var guide: Guide
 var shelf: HBoxContainer
+var planting_menu: MenuButton
+var reset_dialog: ConfirmationDialog
 
 
 func _ready() -> void:
@@ -142,6 +146,8 @@ func _ready() -> void:
 	sound_btn.active = true
 	sound_btn.pressed.connect(func() -> void: sound_toggled.emit())
 	left.add_child(sound_btn)
+	for button in [speed_btn, guide_btn, sound_btn]:
+		button.size_flags_horizontal = Control.SIZE_SHRINK_BEGIN
 
 	tray = HBoxContainer.new()
 	tray.set_anchors_and_offsets_preset(Control.PRESET_CENTER_BOTTOM)
@@ -206,9 +212,35 @@ func _ready() -> void:
 	shelf.visible = false
 	root.add_child(shelf)
 
+	planting_menu = MenuButton.new()
+	planting_menu.text = "Planting ▾"
+	planting_menu.flat = false
+	planting_menu.custom_minimum_size = Vector2(112, 48)
+	left.add_child(planting_menu)
+	var menu := planting_menu.get_popup()
+	menu.add_theme_constant_override("v_separation", 18)
+	menu.add_item("Add varieties", 0)
+	menu.add_item("Reset current home…", 1)
+	menu.id_pressed.connect(_choose_planting)
+
+	reset_dialog = ConfirmationDialog.new()
+	reset_dialog.dialog_autowrap = true
+	reset_dialog.ok_button_text = "Reset home"
+	for button in [reset_dialog.get_ok_button(), reset_dialog.get_cancel_button()]:
+		button.custom_minimum_size = Vector2(112, 44)
+	root.add_child(reset_dialog)
+
 	guide = Guide.new()
 	guide.visible = false
 	root.add_child(guide)
+
+
+func _choose_planting(id: int) -> void:
+	match id:
+		0:
+			varieties_requested.emit()
+		1:
+			home_reset_requested.emit()
 
 
 func _label(size: int, colour: Color) -> Label:
@@ -229,7 +261,7 @@ func blocks(at: Vector2) -> bool:
 		return true
 	if shelf.visible and shelf.get_global_rect().grow(4.0).has_point(at):
 		return true
-	for b: Control in [speed_btn, guide_btn, sound_btn, wish] + tool_btns.values():
+	for b: Control in [speed_btn, guide_btn, sound_btn, wish, planting_menu] + tool_btns.values():
 		if b.is_visible_in_tree() and b.get_global_rect().grow(4.0).has_point(at):
 			return true
 	return false
