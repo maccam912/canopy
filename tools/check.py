@@ -2,7 +2,7 @@
 """Import the project, then run the headless simulation tests."""
 from godot import run
 
-TESTS = (("sim_test", "SIM_PASS", 300),)
+TESTS = (("sim_test", "SIM_PASS", 300), ("wood_contacts", "WOOD_CONTACTS_PASS", 30))
 
 if __name__ == "__main__":
     run(["--headless", "--editor", "--import"], timeout=300)

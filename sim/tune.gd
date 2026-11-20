@@ -14,6 +14,8 @@ const CREEP := 0.5           # how fast strained wood takes a permanent set
 const COLLIDER_R := 2.2      # stems thinner than this let falling wood through (saplings survive a domino run)
 const GROUND_K := 0.2
 const PUSH_GAIN := 0.08     # share of an outside force a stem takes up each step
+const MAX_RELEASE_SPEED := 350.0 # peak tip speed a piece inherits from bending
+const MAX_LOG_SPEED := 850.0     # plenty of room for a full-height fall under gravity
 
 # --- light feeds ---
 const KAPPA := 0.8           # leaf opacity per optical width

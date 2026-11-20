@@ -65,6 +65,7 @@ var age := 0.0
 var dead_for := 0.0
 var health := 1.0
 var height := 0.0
+var horizontal_reach := 0.0
 var max_strain := 0.0
 var cause := ""
 var falls_survived := 0
@@ -100,12 +101,13 @@ var grow_acc := 0.0
 var fork_side := 1.0
 var body := RID()
 var col_seg := PackedInt32Array()
-var col_shapes: Array[RID] = []
+var col_shapes: Array[RectangleShape2D] = []
 var col_x := PackedFloat32Array()   # where each collider was last put
 var col_y := PackedFloat32Array()
 var col_a := PackedFloat32Array()
 var col_l := PackedFloat32Array()
 var col_dirty := true
+var col_reach := 0.0
 var removed := false
 var grips := 0
 var anchor_k := 0.35
@@ -246,6 +248,7 @@ func _add_seg(par: int, rel: float, ord: int, p_bias: float) -> int:
 ## Forward kinematics only: where every segment sits for its current angles.
 func pose() -> void:
 	var top := base_y
+	horizontal_reach = 0.0
 	for i in n:
 		var p := parent[i]
 		var jx := base_x
@@ -261,6 +264,7 @@ func pose() -> void:
 		ay[i] = jy
 		bx[i] = jx + sin(a) * slen[i]
 		by[i] = jy - cos(a) * slen[i]
+		horizontal_reach = maxf(horizontal_reach, absf(bx[i] - base_x))
 		if by[i] < top:
 			top = by[i]
 	height = base_y - top
@@ -720,6 +724,7 @@ func mech(dt: float, wind: float) -> int:
 	var moving := 0.0
 	var uprooting := false
 	var top := base_y
+	horizontal_reach = 0.0
 	var strength := T.SIGMA * health
 	max_strain = 0.0
 	for k in n:
@@ -775,6 +780,7 @@ func mech(dt: float, wind: float) -> int:
 		ay[k] = jy
 		bx[k] = jx + sin(a) * slen[k]
 		by[k] = jy - cos(a) * slen[k]
+		horizontal_reach = maxf(horizontal_reach, absf(bx[k] - base_x))
 		if by[k] < top:
 			top = by[k]
 	height = base_y - top
@@ -862,11 +868,10 @@ func brace(i: int, px: float, py: float, fx: float, fy: float) -> void:
 
 ## Move the stem colliders to match the plant. Plants only ever collide with
 ## fallen wood, and moving a collider is not free, so this happens only while
-## moving wood is near, and only for segments that have moved enough to matter.
+## wood is near, and only for segments that have moved enough to matter.
 func sync_body() -> void:
-	if not body.is_valid():
-		return
-	if not world.wood_near(base_x, height + 40.0):
+	var reach := maxf(horizontal_reach, col_reach)
+	if not body.is_valid() or not world.wood_near(base_x, reach + 40.0):
 		return
 	if col_dirty:
 		_rebuild_body()
@@ -887,13 +892,13 @@ func sync_body() -> void:
 			col_y[c] = cy
 			col_a[c] = ang[i]
 			PhysicsServer2D.body_set_shape_transform(body, c, Transform2D(ang[i], Vector2(cx, cy)))
+	col_reach = horizontal_reach
 
 
 func _rebuild_body() -> void:
 	col_dirty = false
+	col_reach = horizontal_reach
 	PhysicsServer2D.body_clear_shapes(body)
-	for s in col_shapes:
-		PhysicsServer2D.free_rid(s)
 	col_shapes.clear()
 	col_seg.clear()
 	col_x.clear()
@@ -902,11 +907,11 @@ func _rebuild_body() -> void:
 	col_l.clear()
 	for i in n:
 		if rad[i] >= world.collider_r and slen[i] > 4.0:
-			var shape := PhysicsServer2D.rectangle_shape_create()
-			PhysicsServer2D.shape_set_data(shape, Vector2(rad[i], slen[i] * 0.5))
+			var shape := RectangleShape2D.new()
+			shape.size = Vector2(rad[i] * 2.0, slen[i])
 			var cx := (ax[i] + bx[i]) * 0.5
 			var cy := (ay[i] + by[i]) * 0.5
-			PhysicsServer2D.body_add_shape(body, shape, Transform2D(ang[i], Vector2(cx, cy)))
+			PhysicsServer2D.body_add_shape(body, shape.get_rid(), Transform2D(ang[i], Vector2(cx, cy)))
 			col_shapes.append(shape)
 			col_seg.append(i)
 			col_x.append(cx)
@@ -919,7 +924,5 @@ func free_body() -> void:
 	if body.is_valid():
 		PhysicsServer2D.free_rid(body)
 		body = RID()
-	for s in col_shapes:
-		PhysicsServer2D.free_rid(s)
 	col_shapes.clear()
 	col_seg.clear()

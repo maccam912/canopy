@@ -28,15 +28,19 @@ var peak_speed := 0.0
 var beetles := 0.0
 var is_prop := false
 var resting := 0.0
+var sweep_radius := 0.0
+var colliders: Array[CollisionShape2D] = []
+var collision_bounds := Rect2()
+var overlapping_wood: Dictionary[RID, Object] = {}
 
 
 func setup(w: World, data: PackedFloat32Array, com: Vector2, vel: Vector2, spin: float) -> void:
 	world = w
 	position = com
-	linear_velocity = vel
-	angular_velocity = spin
-	collision_layer = 4
-	collision_mask = 1 | 2 | 4
+	# Soil and walls are solid immediately. Check for pre-existing overlaps
+	# with wood after the standing colliders have synced this tick.
+	collision_layer = 0
+	collision_mask = 1
 	contact_monitor = true
 	max_contacts_reported = 6
 	can_sleep = true
@@ -63,6 +67,7 @@ func setup(w: World, data: PackedFloat32Array, com: Vector2, vel: Vector2, spin:
 		volume += r * r * l
 		leaf_area += segs[o + 5]
 		m += T.RHO * r * r * l + T.LEAF_M * segs[o + 5]
+		sweep_radius = maxf(sweep_radius, maxf(a.length(), b.length()) + r)
 		lo = lo.min(a).min(b)
 		hi = hi.max(a).max(b)
 		by_size.append([r * r * l, i])
@@ -86,11 +91,76 @@ func setup(w: World, data: PackedFloat32Array, com: Vector2, vel: Vector2, spin:
 		cs.position = (a + b) * 0.5
 		cs.rotation = (b - a).angle() + PI * 0.5
 		add_child(cs)
+		colliders.append(cs)
+		var bounds := cs.transform * rect.get_rect()
+		collision_bounds = bounds if shapes == 0 else collision_bounds.merge(bounds)
 		shapes += 1
 	rot_time = 22.0 + sqrt(volume) * 0.75
 	big = volume > T.FALL_VOL
 	linear_damp = 0.05
 	angular_damp = 0.15
+	var scale := minf(1.0, T.MAX_RELEASE_SPEED / maxf(_tip_speed(vel, spin), 1.0))
+	linear_velocity = vel * scale
+	angular_velocity = spin * scale
+
+
+func _tip_speed(vel: Vector2, spin: float) -> float:
+	return vel.length() + absf(spin) * sweep_radius
+
+
+func _overlaps_shape(shape: Shape2D, xf: Transform2D, bounds: Rect2) -> bool:
+	var other_bounds := xf * shape.get_rect()
+	if not bounds.intersects(other_bounds):
+		return false
+	for cs in colliders:
+		if cs.shape.collide(cs.global_transform, shape, xf):
+			return true
+	return false
+
+
+## Use the shapes directly: Rapier's space queries can lag collider changes
+## until the next step, after the first contact would already have happened.
+func _overlaps(other: Object) -> bool:
+	var bounds := global_transform * collision_bounds
+	if other is Plant:
+		for i in other.col_shapes.size():
+			var xf := Transform2D(other.col_a[i], Vector2(other.col_x[i], other.col_y[i]))
+			if _overlaps_shape(other.col_shapes[i], xf, bounds):
+				return true
+	elif bounds.intersects(other.global_transform * other.collision_bounds):
+		for cs: CollisionShape2D in other.colliders:
+			if _overlaps_shape(cs.shape, cs.global_transform, bounds):
+				return true
+	return false
+
+
+func _ignore_wood(rid: RID, other: Object) -> void:
+	PhysicsServer2D.body_add_collision_exception(get_rid(), rid)
+	overlapping_wood[rid] = other
+
+
+func _arm_wood_contacts() -> void:
+	for p in world.plants:
+		if not p.removed and p != joint_plant and _overlaps(p):
+			_ignore_wood(p.body, p)
+	for l in world.logs:
+		if l.collision_layer == 4 and _overlaps(l):
+			_ignore_wood(l.get_rid(), l)
+	collision_layer = 4
+	collision_mask = 1 | 2 | 4
+
+
+func _restore_clear_contacts() -> void:
+	for rid in overlapping_wood.keys():
+		var other: Variant = overlapping_wood[rid]
+		var present := is_instance_valid(other)
+		if present and other is Plant:
+			present = not other.removed
+		if present and other == joint_plant:
+			continue
+		if not present or not _overlaps(other):
+			PhysicsServer2D.body_remove_collision_exception(get_rid(), rid)
+			overlapping_wood.erase(rid)
 
 
 func _integrate_forces(state: PhysicsDirectBodyState2D) -> void:
@@ -100,7 +170,13 @@ func _integrate_forces(state: PhysicsDirectBodyState2D) -> void:
 		var drag := minf(leaf_area * 2.2 / mass, 2.5)
 		state.linear_velocity -= state.linear_velocity * minf(1.0, drag * dt)
 		state.angular_velocity -= state.angular_velocity * minf(1.0, drag * 0.6 * dt)
-	var speed := state.linear_velocity.length() + absf(state.angular_velocity) * length * 0.5
+	var speed := _tip_speed(state.linear_velocity, state.angular_velocity)
+	var too_fast := speed > T.MAX_LOG_SPEED
+	if too_fast:
+		var scale := T.MAX_LOG_SPEED / speed
+		state.linear_velocity *= scale
+		state.angular_velocity *= scale
+		speed = T.MAX_LOG_SPEED
 	if speed > peak_speed:
 		peak_speed = speed
 	var count := state.get_contact_count()
@@ -113,10 +189,12 @@ func _integrate_forces(state: PhysicsDirectBodyState2D) -> void:
 				world.on_log_landed(self, pos, peak_speed)
 			continue
 		var plant: Plant = world.body_plant.get(rid)
-		if plant != null and plant != joint_plant:
-			if not world.debug_no_log_push:
-				# The plant feels the opposite of what the log felt, on the stem it touches.
-				var f := -state.get_contact_impulse(i) / dt
+		if plant != null and not overlapping_wood.has(rid):
+			if not world.debug_no_log_push and not too_fast:
+				# Rapier 0.36 reports the impulse toward the collider, so this
+				# already points from the log into the stem it struck.
+				var impulse := state.get_contact_impulse(i).limit_length(mass * T.MAX_LOG_SPEED)
+				var f := impulse / dt
 				plant.push(plant.seg_near(pos), pos.x, pos.y, f.x, f.y)
 			touching = 0.6
 		elif not landed and instance_from_id(state.get_contact_collider_id(i)) is LogBody:
@@ -143,12 +221,15 @@ func tick(dt: float) -> void:
 		var gone := joint_plant == null or joint_plant.removed
 		if gone or age > 4.0 or (age > 0.25 and absf(rotation - joint_rot) > 1.25):
 			release()
+	if collision_layer == 0:
+		_arm_wood_contacts()
+	_restore_clear_contacts()
 
 
 func hinge(plant: Plant, at: Vector2) -> void:
 	joint = PhysicsServer2D.joint_create()
 	PhysicsServer2D.joint_make_pin(joint, at, plant.body, get_rid())
-	PhysicsServer2D.joint_disable_collisions_between_bodies(joint, true)
+	_ignore_wood(plant.body, plant)
 	joint_plant = plant
 	joint_rot = rotation
 

@@ -448,21 +448,25 @@ func wood_near(x: float, reach: float) -> bool:
 
 
 func _mech(dt: float) -> void:
-	wood_spans.clear()
-	for l in logs:
-		if not l.sleeping or l.touching > 0.0:
-			var half := l.length * 0.5 + 30.0 + l.linear_velocity.length() * 0.25
-			wood_spans.append(l.position.x - half)
-			wood_spans.append(l.position.x + half)
 	var count := plants.size()
 	for idx in count:
 		var p := plants[idx]
 		if p.removed or not p.awake:
 			continue
 		var failed := p.mech(dt, wind_at(p.base_x))
-		p.sync_body()
 		if failed >= 0:
 			break_plant(p, failed, p.fail_uproot)
+	wood_spans.clear()
+	for l in logs:
+		if not l.sleeping or l.touching > 0.0:
+			var bounds := l.global_transform * l.collision_bounds
+			var margin := 30.0 + l.linear_velocity.length() * 0.25
+			wood_spans.append(bounds.position.x - margin)
+			wood_spans.append(bounds.end.x + margin)
+	if not wood_spans.is_empty():
+		for p in plants:
+			if not p.removed:
+				p.sync_body()
 
 
 func wind_at(x: float) -> float:
@@ -536,12 +540,15 @@ func break_plant(p: Plant, i: int, uproot: bool, cut := -1.0, kick := 0.0) -> Lo
 	var joint_at := Vector2(data[0], data[1])
 	# The piece keeps the swing it had when it let go.
 	var spin := 0.0
+	var vel := Vector2.ZERO
 	var k := i
 	while k >= 0:
-		spin += p.dvel[k]
+		# Each joint contributes rotation about its own pivot.
+		var rate := p.dvel[k]
+		var arm := com - Vector2(p.ax[k], p.ay[k])
+		spin += rate
+		vel += Vector2(-arm.y, arm.x) * rate
 		k = p.parent[k]
-	var arm := com - Vector2(p.base_x, p.base_y)
-	var vel := Vector2(-arm.y, arm.x) * spin
 	var share := clampf(vol / maxf(p.volume, 1.0), 0.0, 1.0)
 	var part_nutrient := p.nutrient * share
 	p.nutrient -= part_nutrient
@@ -565,9 +572,10 @@ func break_plant(p: Plant, i: int, uproot: bool, cut := -1.0, kick := 0.0) -> Lo
 		if cut >= 0.0:
 			# A cut stem tips the way it was pushed, or the way it already leans.
 			var lean := signf(com.x - joint_at.x) if absf(com.x - joint_at.x) > 2.0 else (1.0 if rng.randf() < 0.5 else -1.0)
-			spin += (kick if kick != 0.0 else lean) * 0.4
-			var arm2 := com - joint_at
-			vel = Vector2(-arm2.y, arm2.x) * spin
+			var snip_spin := (kick if kick != 0.0 else lean) * 0.4
+			var arm := com - joint_at
+			spin += snip_spin
+			vel += Vector2(-arm.y, arm.x) * snip_spin
 		body.setup(self, data, com, vel, spin)
 		add_child(body)
 		logs.append(body)
